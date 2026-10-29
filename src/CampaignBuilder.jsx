@@ -1,9 +1,9 @@
 import React, { useState, useRef } from 'react';
-import { createPausedCampaign, validateCampaign } from './campaignApi.js';
+import { validateCampaign } from './campaignApi.js';
+import { portal } from './portalApi.js';
 
-export default function CampaignBuilder({ account, currency, token, version, geminiKey, setGeminiKey }) {
+export default function CampaignBuilder({ account, currency }) {
   const [form,setForm]=useState({account:/^act_\d+$/.test(account)?account:'',name:'',page:'',budget:'5',countries:'NP',ageMin:'18',ageMax:'65',website:'',image:'',headline:'',message:'',cta:'LEARN_MORE',ordinary:false,reviewed:false});
-  const [localToken,setLocalToken]=useState('');
   const [brief,setBrief]=useState('');
   const [advice,setAdvice]=useState('');
   const [busy,setBusy]=useState(false);
@@ -14,14 +14,9 @@ export default function CampaignBuilder({ account, currency, token, version, gem
   const guard=useRef(false);
   const field=(key,label,type='text')=><label>{label}<input type={type} value={form[key]} disabled={busy||attempted} onChange={e=>setForm({...form,[key]:e.target.value,reviewed:false})}/></label>;
   const assist=async()=>{
-    if(!geminiKey.trim()){setError('Enter a Gemini API key to use the AI assistant.');return;}
     setAiBusy(true);setError('');
     try{
-      const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent',{
-        method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':geminiKey.trim()},
-        body:JSON.stringify({contents:[{parts:[{text:'Act as a Meta ads setup assistant. Reply in the language of the user brief. Do not invent product claims or guarantee results. Give a concise proposed campaign name, headline, primary text, audience reasoning and daily-budget advice. Explain this builder creates WEBSITE TRAFFIC ads optimized for clicks on Facebook Feed, not sales or messaging campaigns. Do not claim to create anything. User brief: '+brief+'\nSetup: '+JSON.stringify({name:form.name,budget:form.budget,currency,countries:form.countries,headline:form.headline,message:form.message})}]}]})
-      });
-      const data=await r.json();if(!r.ok)throw new Error(data.error?.message||'AI request failed.');
+      const data=await portal('ai',{account,prompt:'Help plan a website traffic campaign on Facebook Feed, created paused. Do not claim to create anything. Business brief: '+brief+' Setup: '+JSON.stringify({...form,currency})});
       const answer=data.candidates?.[0]?.content?.parts?.map(p=>p.text||'').join('\n');if(!answer)throw new Error('AI returned no text. Try a more specific brief.');
       setAdvice(answer);
     }catch(e){setError(e.message);}finally{setAiBusy(false);}
@@ -29,9 +24,9 @@ export default function CampaignBuilder({ account, currency, token, version, gem
   const submit=async()=>{
     if(guard.current||attempted)return;
     setError('');
-    try{validateCampaign(form);if(!(token||localToken).trim())throw new Error('Enter an authorized Meta token.');}catch(e){setError(e.message);return;}
+    try{validateCampaign(form);}catch(e){setError(e.message);return;}
     guard.current=true;setBusy(true);setAttempted(true);
-    try{await createPausedCampaign({...form,currency},token||localToken,version,setCreated);}
+    try{const r=await fetch('/api/portal?action=campaign-create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({form:{...form,currency},requestId:crypto.randomUUID()})});const data=await r.json();setCreated(data.ids||{});if(!r.ok)throw new Error(data.error?.message||'Creation failed.');}
     catch(e){setError(e.message+' Created item IDs are shown below. Check Ads Manager before starting another setup.');}
     finally{guard.current=false;setBusy(false);}
   };
@@ -42,8 +37,8 @@ export default function CampaignBuilder({ account, currency, token, version, gem
       <small>This creates real campaign, ad set, creative and ad objects in your authorized Meta account. No ad starts spending here. Messaging, lead forms, video and Special Ad Categories must be configured in Ads Manager.</small>
       <fieldset disabled={busy||attempted}>
         <legend className="font-bold mt-5">1. Account & campaign</legend>
-        <div className="grid sm:grid-cols-2 gap-x-4">{field('account','Meta ad account ID')}{field('name','Campaign name')}</div>
-        {!token&&<label>Meta access token (session only)<input type="password" autoComplete="off" value={localToken} onChange={e=>setLocalToken(e.target.value)}/></label>}
+        <div className="grid sm:grid-cols-2 gap-x-4"><label>Assigned Meta account<input value={account} readOnly/></label>{field('name','Campaign name')}</div>
+
         <small>Requires ads_management and access to the selected account and Facebook Page. A reporting-only token cannot create ads.</small>
         <legend className="font-bold mt-5">2. Budget & audience</legend>
         <p>Daily budget in account currency: <strong>{currency}</strong>. Confirm this matches the account ID. This builder currently supports currencies with 100 minor units (USD, INR, NPR, EUR, GBP, AED, AUD, CAD, SGD).</p>
@@ -68,7 +63,7 @@ export default function CampaignBuilder({ account, currency, token, version, gem
     <aside className="builder-panel self-start space-y-4">
       <h2 className="text-xl font-bold">AI setup assistant</h2>
       <p className="text-sm">Describe the business, offer, audience and language. The assistant suggests copy and setup choices; you review and enter them in the form.</p>
-      <label>Gemini API key (session only)<input type="password" value={geminiKey} autoComplete="off" onChange={e=>setGeminiKey(e.target.value)}/></label>
+
       <label>Your business / question<textarea rows="5" value={brief} onChange={e=>setBrief(e.target.value)} placeholder="Nepal-based interior service. Budget NPR 450/day. Help with headline and audience."/></label>
       <small>Your brief and non-secret form details are sent to Gemini only when you click below.</small>
       <button className="builder-primary" disabled={aiBusy||!brief.trim()} onClick={assist}>{aiBusy?'Thinking…':'Get AI suggestions'}</button>

@@ -1,119 +1,70 @@
-# Meta Pulse — complete Vercel project
+# MDRS Meta Ads — secure client portal
 
-The original dashboard is included in full in src/App.jsx. This project uses
-React + Vite + Tailwind CSS. The uploaded source was JavaScript/JSX despite its
-.tsx extension, so this deliverable uses .jsx without disabling TypeScript checks.
+React/Vite reporting dashboard with Vercel Node API functions, Neon Postgres and Better Auth. Client users sign in with a unique username/password and can read only accounts assigned to their business. Meta and Gemini keys are never sent to the browser.
 
-## GitHub se Vercel deploy
-1. ZIP extract karein.
-2. Is folder ke CONTENTS GitHub repository root me upload karein.
-   package.json aur index.html root me hone chahiye; src folder bhi upload karein.
-   Sirf App.jsx ya ZIP file upload karna enough nahi hai.
-3. Existing React project replace kar rahe hain to purane conflicting config files
-   (for example old vite.config.ts / tailwind.config.cjs) retain na karein.
-   Existing repository ka backup pehle rakhein.
-4. Vercel me repository import karein. Settings:
-   - Framework Preset: Vite
-   - Root Directory: directory containing package.json (normally repository root)
-   - Node.js: 24.x
-   - Install Command: npm ci
-   - Build Command: npm run build
-   - Output Directory: dist
-5. Deploy karein. Existing Vercel project me conflicting old settings reset karein.
-   vercel.json already supplies install/build/output settings.
-6. No environment variables are required to build or open the demo dashboard.
+## Roles and access
 
-## Local run
-Use Node.js 24.
+- **Client:** assigned account reports, filters, charts, CSV/PDF exports and AI explanations. No campaign writes, client management or secret access.
+- **Admin:** client/user management, account verification and assignment, disabling access, password resets and paused campaign creation. Admin MFA is mandatory.
+- Temporary passwords must be changed before any account data is accessible. Public signup is disabled. Passwords are hashed by Better Auth; sessions use HttpOnly cookies.
+- Every backend account request verifies the session, current user status, active business and account assignment. An account cannot be assigned to two businesses. Reports are private/no-store; no shared tenant cache is used.
+
+## Hosting configuration
+
+- Vercel project: `mdrs-meta-ads-dashboard`
+- Framework: Vite; Node 24; install: `npm ci`; build: `npm run build:vercel`; output: `dist`.
+- `build:vercel` builds the app then applies additive auth/portal migrations to the production database. Preview builds do not mutate the production database.
+- Neon built-in Auth remains enabled. This portal uses its own Better Auth tables in Postgres so username/password, mandatory admin MFA and invite-only account creation are controlled by the application.
+
+### Server-only environment variables
+
+| Name | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Provisioned Neon connection |
+| `BETTER_AUTH_SECRET` | Random 32+ byte auth secret, Sensitive |
+| `BETTER_AUTH_URL` | Canonical HTTPS production origin |
+| `ADMIN_EMAIL` | Initial admin email |
+| `ADMIN_INITIAL_PASSWORD` | Random initial admin password; only used if no admin exists |
+| `META_TOKEN_DEFAULT` | Existing Meta credential, Sensitive |
+| `META_TOKEN_CLIENTNAME` | Additional per-client Meta credential, Sensitive |
+| `META_API_VERSION` | Server-selected supported Graph API version, e.g. v23.0 |
+| `GEMINI_API_KEY` | Server-only Gemini key, Sensitive |
+| `GEMINI_MODEL` | Optional model name; defaults to gemini-2.5-flash |
+
+Never prefix a secret with `VITE_`. The integration's `VITE_NEON_AUTH_URL` is a public service URL, not a token, and is not consumed by this application. Do not put tokens in query strings, localStorage, GitHub, exported reports or support messages. If a token was used in a previous public frontend deployment, rotate it in Meta and update its server environment variable.
+
+Environment changes require redeployment. Database connection strings are never returned through the application APIs. No secrets are present in this repository.
+
+## Initial administrator
+
+The migration initializes username `mdrs_admin` only when no admin exists. The owner receives the initial password separately, outside Git. First sign-in requires choosing a new password and enrolling an authenticator app. Store recovery codes privately. Clear `ADMIN_INITIAL_PASSWORD` after the owner completes setup; an existing admin is never reset by later deployments.
+
+## Onboard each client
+
+1. Admin signs in and opens **Manage clients**.
+2. Create the client's business.
+3. Add that client's Meta token to Vercel as a Sensitive server-only variable such as `META_TOKEN_MOLABIS`, then redeploy. No token goes into the client browser.
+4. Select the business, enter its actual `act_...` account ID and select the token reference. The server verifies the ID, account name and currency with Meta before assigning it.
+5. Create the client's username using their name and email. A strong temporary password is shown once to the administrator.
+6. Share the portal URL, username and temporary password privately with that client. The application does not automatically email credentials.
+7. The client chooses their own password on first login and sees only their assigned business accounts.
+
+Disabling a user revokes their sessions. Disabling a business blocks its reporting requests immediately. Password recovery requests appear in the admin panel; the administrator must verify the client's identity before resetting. Email delivery/automatic email reset is not configured.
+
+## Existing dashboard features
+
+The existing light/dark dashboard, account currency handling, date filters, charts, breakdowns, campaign tables, CSV and PDF report exports, AI strategy screen and campaign builder remain. Clients cannot use campaign creation or local data editing. Custom campaign inputs and optimization simulations are admin-only local scenarios; they do not claim to update Meta. Campaign creation is admin-only and creates paused website-traffic / single-image Facebook Feed objects, with duplicate-attempt protection. Other objectives still require Ads Manager.
+
+Live Meta reporting replaces demo data. Failed requests show an error instead of a fabricated AI audit. Page polling runs every 60 seconds while open; this is not an always-running data collection worker. Meta data may be delayed by Meta. Actual currency is verified from Meta.
+
+## Local checks
+
+```sh
 npm ci
-npm run dev
-
-Production verification:
+npm test
 npm run build
-npm run preview
+```
 
-## API setup
-- Meta: open Data Sync & API Setup / Live API connector and paste your authorized
-  Meta token. The existing API version selector, account discovery, insights,
-  date filters, auto-sync and account controls remain.
-- Gemini: open AI Optimization Hub, paste your own Gemini API key into the new
-  password input, then generate a strategy. This key is held in React state only;
-  refreshing the page clears it. Requests go directly from your browser to Google.
-- No credentials are included. Live service success depends on valid credentials,
-  permissions, API/model availability, quota and the selected API version.
-- Gemini failure shows an explicit error; the original example strategy remains
-  available as a labeled fallback, not a successful AI analysis.
-- Do not put secret tokens in VITE_ environment variables: these are compiled
-  into public browser JavaScript. Legacy support in the original app is retained,
-  but entering a token through the UI is recommended for this personal dashboard.
-- The existing optional "remember token" setting stores Meta tokens in localStorage.
-- Client-view links remain available. Including a token is now opt-in and clearly
-  labeled as Base64, not encryption. The client view is a UI filter, not server
-  authorization. Anyone receiving a token-bearing URL can recover that token.
-  This project has no authenticated, multi-tenant backend.
+`npm run dev` runs the frontend only; Vercel functions require `vercel dev` with a dedicated development database and environment. Do not point development or untrusted preview branches at production secrets. No client accounts or live ad mutations are created during tests.
 
-## Features retained
-Overview KPIs and trends; campaign table, search, sorting and status controls;
-audience, demographic, device and geography views; placements; currency handling;
-date selection; custom campaign input; CSV export; AI optimization suggestions,
-forecasts, strategy and hooks; Meta API controls and live refresh; client sharing;
-dark/light theme and responsive desktop/mobile navigation.
-
-Existing limitations are retained: campaign pause/optimization actions are local
-dashboard simulations, not writes to Meta; demo and some illustrative metrics
-are not live telemetry. Live refresh runs while the browser page is open, not as
-a 24/7 server worker. Multi-account aggregation and large-account API pagination
-have not been comprehensively audited in this deployment repair.
-
-## Fixes
-- Fixed the undefined exactCpr reference in account summary:
-  exactCpr: exactAccountCpr.
-- Added complete entry point, dependency manifest and npm lockfile.
-- Added Tailwind/PostCSS/Vite/Vercel configuration.
-- Added build-time checks for undefined variables, duplicate keys and unreachable code.
-- Replaced the empty Gemini key with a session-only key input and useful errors.
-- Corrected AI account name lookup to use discovered accounts.
-- Corrected token-sharing and deployment wording.
-- Split production charts/vendor bundles to avoid the 500 kB chunk warning.
-
-## Validation
-- npm run build: PASS (includes npm run check).
-- React render and navigation through all five tabs in jsdom: PASS.
-- Missing Gemini key validation: PASS.
-- Mocked Meta account summary, campaign sync and breakdown requests: PASS;
-  regression path containing the original exactCpr ReferenceError is exercised.
-- No real Meta/Gemini calls or Vercel deployment were performed.
-- Full browser visual QA was unavailable: Chromium download failed in the
-  execution environment. jsdom chart-size warnings are expected because it
-  does not perform browser layout; they are not visual verification.
-
-The supplied screenshot contains deployment statuses, not the actual build log.
-The exact cause of that earlier Vercel failure therefore cannot be established.
-This complete project builds successfully in the provided environment.
-
-Reference documentation:
-https://vite.dev/guide/static-deploy
-https://vercel.com/docs/builds/configure-a-build
-
-## Theme, PDF and campaign-builder update
-- Light theme now remaps fixed dark text/panel styles, including cards, tables,
-  dialogs and accent colors. Existing dark theme is retained.
-- Export captures campaign data when opened; CSV and a paginated landscape PDF
-  are available. PDF renders Unicode campaign names as an image for font fidelity.
-  Print / Save as PDF is an additional browser-native fallback.
-- Create Campaign supports real Website Traffic campaigns: single-image
-  Facebook Feed ads, country/age targeting, daily budget, headline, text and CTA.
-  All campaign/ad-set/ad objects are PAUSED; activate only through Ads Manager.
-  Messaging, leads/forms, video, special categories and other objectives are not
-  implemented in this builder.
-- Requires the client's authorized Meta token with ads_management and Page access.
-  Client-view mode requires its own session token for creation, not a shared
-  reporting token. Account currency is verified before writes.
-- Only two-decimal account currencies listed in the UI are currently supported.
-- Gemini setup assistant sends only the entered brief and non-secret setup fields.
-  Recommendations are not applied or published automatically.
-- There is no automatic write retry. Partial success shows IDs so a user can
-  inspect and complete the setup in Ads Manager rather than creating duplicates.
-- node --test tests/campaignApi.test.js verifies ordered writes, PAUSED status,
-  minor-unit conversion, currency mismatch, input validation and partial failures.
-- Real Meta writes / Gemini responses were not tested without user credentials.
+Tests cover the real Better Auth username/password/session flow using a temporary SQLite database, signup rejection, password hashing, password change/logout, tenant authorization, admin MFA gates, query allowlisting, secret redaction, origin checks and paused campaign sequencing/failure handling.

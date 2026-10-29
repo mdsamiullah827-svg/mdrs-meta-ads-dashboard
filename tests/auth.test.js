@@ -1,0 +1,26 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {betterAuth} from 'better-auth';
+import {getMigrations} from 'better-auth/db/migration';
+import {authOptions} from '../server/auth.js';
+import {randomBytes} from 'node:crypto';
+test('real auth flow: invite-only signup, hashed password, username session, password change and logout',async()=>{
+ process.env.BETTER_AUTH_SECRET=randomBytes(32).toString('base64url');process.env.BETTER_AUTH_URL='http://localhost:3000';
+ const database=new DatabaseSync(':memory:');const options=authOptions(database);options.advanced={useSecureCookies:false};const auth=betterAuth(options);
+ await (await getMigrations(options)).runMigrations();
+ const password=randomBytes(20).toString('base64url');
+ const created=await auth.api.createUser({body:{name:'Test Client',email:'client@example.test',password,role:'user',data:{username:'test_client',mustChangePassword:true}}});
+ assert.equal(created.user.mustChangePassword,true);
+ const stored=database.prepare('SELECT password FROM account').get();assert.notEqual(stored.password,password);
+ const call=(path,body,cookie='')=>auth.handler(new Request('http://localhost:3000/api/auth/'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json',Origin:'http://localhost:3000',Cookie:cookie},body:body?JSON.stringify(body):undefined}));
+ assert.equal((await call('sign-up/email',{name:'Intruder',email:'new@example.test',password})).status,400);
+ assert.equal((await call('sign-in/username',{username:'test_client',password:'wrong-password-123'})).status,401);
+ const signed=await call('sign-in/username',{username:'test_client',password});assert.equal(signed.status,200);
+ const cookie=signed.headers.getSetCookie().map(s=>s.split(';')[0]).join('; ');
+ const session=await (await call('get-session',undefined,cookie)).json();assert.equal(session.user.id,created.user.id);assert.equal(session.user.role,'user');
+ const changed=await call('change-password',{currentPassword:password,newPassword:randomBytes(20).toString('base64url'),revokeOtherSessions:true},cookie);assert.equal(changed.status,200);
+ assert.equal((await call('sign-out',{},cookie)).status,200);
+ assert.equal(await (await call('get-session',undefined,cookie)).json(),null);
+ database.close();
+});

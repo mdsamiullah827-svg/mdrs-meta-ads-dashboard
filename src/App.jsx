@@ -1,3 +1,4 @@
+import { metaFetch, askAI } from './portalApi.js';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { buildCampaignCSV } from './csvExport.js';
 import CampaignBuilder from './CampaignBuilder.jsx';
@@ -561,7 +562,7 @@ const extractExactMetaResults = (
   };
 };
 
-export default function App() {
+export default function App({ portalUser, portalAccounts }) {
   const [darkMode, setDarkMode] = useState(true);
   const [csvExport, setCsvExport] = useState(null);
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -571,22 +572,22 @@ export default function App() {
     return () => { if (csvExport) URL.revokeObjectURL(csvExport.url); };
   }, [csvExport]);
   const [activeTab, setActiveTab] = useState('overview');
-  const [adAccounts, setAdAccounts] = useState(AD_ACCOUNTS);
-  const [selectedAccount, setSelectedAccount] = useState(AD_ACCOUNTS[0].id);
+  const [adAccounts, setAdAccounts] = useState(portalAccounts);
+  const [selectedAccount, setSelectedAccount] = useState(portalAccounts[0]?.id || '');
   const [datePreset, setDatePreset] = useState('Last 30 Days');
   const [liveSync, setLiveSync] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState('Just now');
   const [livePulseCount, setLivePulseCount] = useState(0);
   const [exactAccountOverview, setExactAccountOverview] = useState(null);
 
-  const [campaigns, setCampaigns] = useState(INITIAL_CAMPAIGNS);
-  const [timeSeries, setTimeSeries] = useState(INITIAL_TIME_SERIES);
-  const [placements, setPlacements] = useState(PLACEMENT_DATA);
-  const [demographics, setDemographics] = useState(DEMOGRAPHICS_DATA);
-  const [regionsData, setRegionsData] = useState(REGION_DATA);
-  const [countriesData, setCountriesData] = useState(COUNTRY_DATA);
+  const [campaigns, setCampaigns] = useState([]);
+  const [timeSeries, setTimeSeries] = useState([]);
+  const [placements, setPlacements] = useState([]);
+  const [demographics, setDemographics] = useState([]);
+  const [regionsData, setRegionsData] = useState([]);
+  const [countriesData, setCountriesData] = useState([]);
   const [geoViewMode, setGeoViewMode] = useState('region');
-  const [deviceSplit, setDeviceSplit] = useState(DEVICE_SPLIT);
+  const [deviceSplit, setDeviceSplit] = useState([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
@@ -600,26 +601,21 @@ export default function App() {
 
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiResponse, setAiResponse] = useState(null);
-  const [geminiApiKey, setGeminiApiKey] = useState('');
   const [aiError, setAiError] = useState('');
   const [aiPromptInput, setAiPromptInput] = useState('');
   const [aiSelectedFocus, setAiSelectedFocus] = useState('Full Account Audit & Scaling Plan');
 
-  const [metaApiToken, setMetaApiToken] = useState('');
-  const [metaApiVersion, setMetaApiVersion] = useState('v21.0');
-  const [metaAdAccountId, setMetaAdAccountId] = useState('act_101');
-  const [rememberToken, setRememberToken] = useState(true);
+  const metaApiVersion = 'server';
   const [isLiveApiModalOpen, setIsLiveApiModalOpen] = useState(false);
-  const [isLiveApiConnected, setIsLiveApiConnected] = useState(false);
+  const isLiveApiConnected = true;
   const [isFetchingAccounts, setIsFetchingAccounts] = useState(false);
   const [isFetchingLiveInsights, setIsFetchingLiveInsights] = useState(false);
   const [apiErrorMsg, setApiErrorMsg] = useState(null);
-  const [discoveredLiveAccounts, setDiscoveredLiveAccounts] = useState([]);
+  const [discoveredLiveAccounts, setDiscoveredLiveAccounts] = useState(portalAccounts);
 
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [isClientLockedMode, setIsClientLockedMode] = useState(false);
-  const [clientBrandName, setClientBrandName] = useState('');
-  const [shareIncludeToken, setShareIncludeToken] = useState(false);
+  const isClientLockedMode = portalUser.role !== 'admin';
+  const clientBrandName = portalAccounts[0]?.industry || portalUser.name;
   const [copiedLinkSuccess, setCopiedLinkSuccess] = useState(false);
   const activeFetchIdRef = useRef(0);
 
@@ -677,64 +673,7 @@ export default function App() {
     return 0;
   };
 
-  const handleFetchAllManagedAccounts = async (tokenOverride) => {
-    const tokenToUse = (tokenOverride ?? metaApiToken).trim();
-    if (!tokenToUse) {
-      setApiErrorMsg('Please paste a valid Meta Graph API Access Token first.');
-      return;
-    }
-
-    setIsFetchingAccounts(true);
-    setApiErrorMsg(null);
-
-    try {
-      const url = `https://graph.facebook.com/${metaApiVersion}/me/adaccounts?fields=id,name,account_id,account_status,currency,amount_spent,business_name&limit=100&access_token=${encodeURIComponent(tokenToUse)}`;
-      const res = await fetch(url);
-      const data = await res.json();
-
-      if (data.error) {
-        throw new Error(data.error.message || 'Invalid Meta Access Token or missing ads_read permission.');
-      }
-
-      const rawAccounts = data.data || [];
-      if (rawAccounts.length === 0) {
-        throw new Error('No Ad Accounts found on this profile. Ensure ads_read & business_management permissions are enabled.');
-      }
-
-      const formattedAccounts = rawAccounts.map((acc) => ({
-        id: acc.id,
-        accountId: acc.account_id,
-        name: acc.name || `Ad Account ${acc.account_id}`,
-        currency: acc.currency || 'USD',
-        industry: acc.business_name ? `${acc.business_name}` : 'Meta Ad Account',
-        status: acc.account_status === 1 ? 'ACTIVE' : acc.account_status === 2 ? 'DISABLED' : 'UNSETTLED',
-        amountSpent: acc.amount_spent ? (parseFloat(acc.amount_spent) / 100).toFixed(2) : '0.00'
-      }));
-
-      setDiscoveredLiveAccounts(formattedAccounts);
-      setAdAccounts(formattedAccounts);
-      setIsLiveApiConnected(true);
-
-      if (rememberToken) {
-        try {
-          localStorage.setItem('meta_pulse_access_token', tokenToUse);
-        } catch (e) {}
-      }
-
-      const firstTargetId = formattedAccounts[0].id;
-      setSelectedAccount(firstTargetId);
-      showToast(
-        'Meta Ads Manager Synced!',
-        `Loaded ${formattedAccounts.length} Ad Account(s) with exact currency (${formattedAccounts[0].currency}).`
-      );
-
-      await fetchLiveAccountTelemetry(firstTargetId, tokenToUse, datePreset, formattedAccounts);
-    } catch (err) {
-      setApiErrorMsg(err.message || 'Failed to connect to Meta Graph API.');
-    } finally {
-      setIsFetchingAccounts(false);
-    }
-  };
+  const handleFetchAllManagedAccounts = () => fetchLiveAccountTelemetry(selectedAccount, null, datePreset, portalAccounts);
 
   const fetchLiveAccountTelemetry = async (
     accountIdToFetch,
@@ -742,13 +681,13 @@ export default function App() {
     presetOverride,
     accountsPoolOverride
   ) => {
-    const token = (tokenOverride ?? metaApiToken).trim();
-    if (!token || !accountIdToFetch) return;
+    if (!accountIdToFetch) return;
 
     // Increment request tracker so slow responses from a previous Ad Account never overwrite the newly selected Ad Account
     const currentFetchId = ++activeFetchIdRef.current;
 
     setIsFetchingLiveInsights(true);
+    setExactAccountOverview(null); setCampaigns([]); setTimeSeries([]); setPlacements([]); setDemographics([]); setRegionsData([]); setCountriesData([]);
     setApiErrorMsg(null);
     const metaPreset = mapDatePresetToMeta(presetOverride || datePreset);
     const pool = accountsPoolOverride || discoveredLiveAccounts;
@@ -765,12 +704,12 @@ export default function App() {
       const primaryAct = targetAccountIds[0];
 
       // 0. Fetch exact Ad Account currency & name metadata + Account-Level summary
-      const accInfoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}?fields=id,name,currency,account_status,business_name,amount_spent&access_token=${encodeURIComponent(token)}`;
-      let accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&${getDateQueryParam(metaPreset)}&fields=spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,results,cost_per_result,purchase_roas&access_token=${encodeURIComponent(token)}`;
+      const accInfoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}?fields=id,name,currency,account_status,business_name,amount_spent`;
+      let accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&${getDateQueryParam(metaPreset)}&fields=spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,results,cost_per_result,purchase_roas`;
 
       let [accInfoRes, accSumRes] = await Promise.all([
-        fetch(accInfoUrl),
-        fetch(accSummaryInsightsUrl)
+        metaFetch(accInfoUrl),
+        metaFetch(accSummaryInsightsUrl)
       ]);
       const accInfoJson = await accInfoRes.json();
       let accSumJson = await accSumRes.json();
@@ -781,8 +720,8 @@ export default function App() {
         if (metaPreset === 'data_maximum') {
           effectiveMetaPreset = 'maximum';
         }
-        accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&date_preset=${effectiveMetaPreset}&fields=spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,purchase_roas&access_token=${encodeURIComponent(token)}`;
-        accSumRes = await fetch(accSummaryInsightsUrl);
+        accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&date_preset=${effectiveMetaPreset}&fields=spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,purchase_roas`;
+        accSumRes = await metaFetch(accSummaryInsightsUrl);
         accSumJson = await accSumRes.json();
       }
 
@@ -864,17 +803,17 @@ export default function App() {
 
       const campaignPromises = targetAccountIds.map(async (actId) => {
         // Fetch BOTH all campaign insights (which includes deleted/archived campaigns that spent in the period) AND campaign metadata
-        let insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&date_preset=${effectiveMetaPreset}&fields=${campaignFields}&limit=500&access_token=${encodeURIComponent(token)}`;
-        const campaignsMetaUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/campaigns?fields=id,name,effective_status,status,daily_budget,lifetime_budget,objective&limit=500&access_token=${encodeURIComponent(token)}`;
+        let insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&date_preset=${effectiveMetaPreset}&fields=${campaignFields}&limit=500`;
+        const campaignsMetaUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/campaigns?fields=id,name,effective_status,status,daily_budget,lifetime_budget,objective&limit=500`;
 
-        let [insRes, cmpRes] = await Promise.all([fetch(insightsUrl), fetch(campaignsMetaUrl)]);
+        let [insRes, cmpRes] = await Promise.all([metaFetch(insightsUrl), metaFetch(campaignsMetaUrl)]);
         let insJson = await insRes.json();
         const cmpJson = await cmpRes.json();
 
         // Fallback if 'results,cost_per_result' fields are unsupported on older API version
         if (insJson?.error) {
-          insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&date_preset=${effectiveMetaPreset}&fields=${fallbackCampaignFields}&limit=500&access_token=${encodeURIComponent(token)}`;
-          insRes = await fetch(insightsUrl);
+          insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&date_preset=${effectiveMetaPreset}&fields=${fallbackCampaignFields}&limit=500`;
+          insRes = await metaFetch(insightsUrl);
           insJson = await insRes.json();
         }
 
@@ -1149,18 +1088,18 @@ export default function App() {
       }
 
       // Fetch Time-Series, Placements, Age/Gender & Country/Region in parallel for the selected Ad Account
-      const timeSeriesUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&time_increment=1&fields=date_start,spend,impressions,inline_link_clicks,clicks,ctr,actions,action_values&limit=90&access_token=${encodeURIComponent(token)}`;
-      const placementUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=publisher_platform,platform_position&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,cpc,cpm,actions,action_values&limit=50&access_token=${encodeURIComponent(token)}`;
-      const demoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=age,gender&fields=spend,impressions,reach,inline_link_clicks,clicks,actions,action_values&limit=100&access_token=${encodeURIComponent(token)}`;
-      const regionUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=country,region&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100&access_token=${encodeURIComponent(token)}`;
-      const countryUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=country&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100&access_token=${encodeURIComponent(token)}`;
+      const timeSeriesUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&time_increment=1&fields=date_start,spend,impressions,inline_link_clicks,clicks,ctr,actions,action_values&limit=90`;
+      const placementUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=publisher_platform,platform_position&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,cpc,cpm,actions,action_values&limit=50`;
+      const demoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=age,gender&fields=spend,impressions,reach,inline_link_clicks,clicks,actions,action_values&limit=100`;
+      const regionUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=country,region&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100`;
+      const countryUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=country&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100`;
 
       const [tsRes, plRes, demoRes, regRes, cntRes] = await Promise.all([
-        fetch(timeSeriesUrl),
-        fetch(placementUrl),
-        fetch(demoUrl),
-        fetch(regionUrl),
-        fetch(countryUrl)
+        metaFetch(timeSeriesUrl),
+        metaFetch(placementUrl),
+        metaFetch(demoUrl),
+        metaFetch(regionUrl),
+        metaFetch(countryUrl)
       ]);
 
       const [tsJson, plJson, demoJson, regJson, cntJson] = await Promise.all([
@@ -1382,67 +1321,7 @@ export default function App() {
     }
   };
 
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const urlClientAcc = params.get('client_account');
-      const urlClientName = params.get('brand');
-      const urlToken = params.get('token') ? atob(params.get('token')) : null;
-
-      let envToken = '';
-      try {
-        if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_META_ACCESS_TOKEN) {
-          envToken = import.meta.env.VITE_META_ACCESS_TOKEN;
-        }
-      } catch (e) {}
-
-      const saved = localStorage.getItem('meta_pulse_access_token');
-      const activeToken = urlToken || envToken || saved || '';
-
-      if (urlClientAcc) {
-        setIsClientLockedMode(true);
-        setSelectedAccount(urlClientAcc);
-        if (urlClientName) setClientBrandName(urlClientName);
-      }
-
-      if (activeToken) {
-        setMetaApiToken(activeToken);
-        setTimeout(() => {
-          if (urlClientAcc) {
-            setIsLiveApiConnected(true);
-            setAdAccounts([
-              {
-                id: urlClientAcc,
-                name: urlClientName || `Client Ad Account (${urlClientAcc})`,
-                currency: 'USD',
-                industry: 'Client Live View'
-              }
-            ]);
-            fetchLiveAccountTelemetry(urlClientAcc, activeToken, datePreset, [
-              { id: urlClientAcc, name: urlClientName || urlClientAcc }
-            ]);
-          } else {
-            handleFetchAllManagedAccounts(activeToken);
-          }
-        }, 300);
-      }
-    } catch (e) {}
-  }, []);
-
-  const generatedClientUrl = useMemo(() => {
-    const baseUrl = window.location.origin + window.location.pathname;
-    const currentAccObj = adAccounts.find((a) => a.id === selectedAccount);
-    const label = clientBrandName.trim() || currentAccObj?.name || selectedAccount;
-    const params = new URLSearchParams();
-    params.set('client_account', selectedAccount);
-    params.set('brand', label);
-    if (shareIncludeToken && metaApiToken) {
-      try {
-        params.set('token', btoa(metaApiToken.trim()));
-      } catch (e) {}
-    }
-    return `${baseUrl}?${params.toString()}`;
-  }, [selectedAccount, clientBrandName, shareIncludeToken, metaApiToken, adAccounts]);
+  const generatedClientUrl = window.location.origin;
 
   const fallbackCopyText = (text) => {
     const textArea = document.createElement('textarea');
@@ -1475,29 +1354,10 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isLiveApiConnected && metaApiToken) {
-      fetchLiveAccountTelemetry(selectedAccount, metaApiToken, datePreset);
+    if (isLiveApiConnected) {
+      fetchLiveAccountTelemetry(selectedAccount, null, datePreset);
     }
   }, [selectedAccount, datePreset, isLiveApiConnected]);
-
-  const handleDisconnectLiveApi = () => {
-    setIsLiveApiConnected(false);
-    setExactAccountOverview(null);
-    setDiscoveredLiveAccounts([]);
-    setAdAccounts(AD_ACCOUNTS);
-    setSelectedAccount(AD_ACCOUNTS[0].id);
-    setCampaigns(INITIAL_CAMPAIGNS);
-    setTimeSeries(INITIAL_TIME_SERIES);
-    setPlacements(PLACEMENT_DATA);
-    setDemographics(DEMOGRAPHICS_DATA);
-    setRegionsData(REGION_DATA);
-    setCountriesData(COUNTRY_DATA);
-    setDeviceSplit(DEVICE_SPLIT);
-    try {
-      localStorage.removeItem('meta_pulse_access_token');
-    } catch (e) {}
-    showToast('Switched to Demo Mode', 'Restored sample multi-account simulation data.');
-  };
 
   useEffect(() => {
     if (!liveSync) return;
@@ -1505,7 +1365,7 @@ export default function App() {
     // IMPORTANT: When Live Meta API is connected, NEVER run random demo simulation! Only poll real Meta Graph API.
     if (isLiveApiConnected) {
       const livePoll = setInterval(() => {
-        fetchLiveAccountTelemetry(selectedAccount, metaApiToken, datePreset);
+        fetchLiveAccountTelemetry(selectedAccount, null, datePreset);
       }, 60000);
       return () => clearInterval(livePoll);
     }
@@ -1566,7 +1426,7 @@ export default function App() {
     }, 3200);
 
     return () => clearInterval(interval);
-  }, [liveSync, isLiveApiConnected, selectedAccount, metaApiToken, datePreset]);
+  }, [liveSync, isLiveApiConnected, selectedAccount, null, datePreset]);
 
   const dateMultiplier = useMemo(() => {
     if (isLiveApiConnected) return 1.0;
@@ -1814,6 +1674,7 @@ export default function App() {
   }, [enrichedCampaigns, placements, appliedOptimizations, dateMultiplier, activeCurrencySymbol]);
 
   const handleApplyOptimization = (suggestion) => {
+    if (isClientLockedMode) return;
     if (appliedOptimizations.includes(suggestion.id)) return;
 
     setAppliedOptimizations((prev) => [...prev, suggestion.id]);
@@ -1889,30 +1750,10 @@ export default function App() {
     );
   };
 
-  const toggleCampaignStatus = (id, e) => {
-    e.stopPropagation();
-    setCampaigns((prev) =>
-      prev.map((c) => {
-        if (c.id === id) {
-          const nextStatus = c.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-          showToast(
-            `Campaign ${nextStatus === 'ACTIVE' ? 'Resumed' : 'Paused'}`,
-            `"${c.name}" is now ${nextStatus}.`
-          );
-          return { ...c, status: nextStatus };
-        }
-        return c;
-      })
-    );
-  };
+  const toggleCampaignStatus = (id, e) => { e.stopPropagation(); showToast('Read-only report', 'Use Meta Ads Manager to change campaign status.'); };
 
   const handleAskGeminiStrategist = async (customQuery) => {
     setAiError('');
-    if (!geminiApiKey.trim()) {
-      setAiError('Enter your Gemini API key below to generate a strategy. The key is kept only in this browser session.');
-      setActiveTab('ai-hub');
-      return;
-    }
     setIsAiLoading(true);
     setAiResponse(null);
 
@@ -1984,83 +1825,13 @@ ${metricsSummary}`;
       }
     };
 
-    const apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
-
-    let retries = 0;
-    const delays = [1000, 2000, 4000];
-
-    while (retries <= 3) {
-      try {
-        const res = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': geminiApiKey.trim() },
-          body: JSON.stringify(payload)
-        });
-        if (!res.ok) {
-          const failure = await res.json().catch(() => ({}));
-          if (res.status >= 400 && res.status < 500 && res.status !== 429) retries = 3;
-          throw new Error(failure?.error?.message || `Gemini request failed (HTTP ${res.status})`);
-        }
-        const data = await res.json();
-        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          const parsed = JSON.parse(text);
-          setAiResponse(parsed);
-          setIsAiLoading(false);
-          return;
-        }
-        throw new Error('Empty response');
-      } catch (err) {
-        if (retries === 3) {
-          setAiError(`AI unavailable: ${err.message}. Showing the original example strategy below; it is not a generated audit of your live account.`);
-          setAiResponse({
-            executiveSummary: `Based on your ${totals.roas.toFixed(2)}x blended ROAS and ${totals.ctr.toFixed(2)}% CTR, your Instagram Reels Advantage+ campaigns are driving disproportionate efficiency, while warm retargeting frequency (${totals.frequency.toFixed(2)}x) and landing page load speed on Cold Lookalikes are capping scale.`,
-            estimatedRoasPotential: `${(totals.roas + 0.85).toFixed(2)}x (+22% Efficiency Lift)`,
-            actionSteps: [
-              {
-                title: 'Consolidate Budget into Advantage+ Shopping & IG Reels',
-                priority: 'Immediate (Next 24h)',
-                detail: 'Increase Q4_Scale_Advantage+ daily budget by 20% every 48 hours while CPA remains under $11.50. Exclude Audience Network across all traffic sets.',
-                metricTarget: 'Scale daily spend +$150/day at >4.3x ROAS'
-              },
-              {
-                title: 'Fix 59% Click-to-LPV Drop-off on Cold Lookalike Webinar',
-                priority: 'Critical Technical Fix',
-                detail: 'Your link CTR is strong (2.40%), proving hook resonance, but 59% of users bounce before the page loads. Switch to a lightweight native lead form or remove render-blocking JS.',
-                metricTarget: 'Boost LPV Rate from 41% to >82%'
-              },
-              {
-                title: 'Combat Creative Fatigue in Warm 30-Day Retargeting',
-                priority: 'High Impact Creative',
-                detail: 'Frequency has crossed 4.0x on static carousels. Introduce a 15-second Founder Objection-Busting Reel addressing price & setup time.',
-                metricTarget: 'Reduce Frequency to <2.4x & lift CTR +0.65%'
-              }
-            ],
-            adCopyHooks: [
-              {
-                angle: 'Pattern Interrupt / Time-Saving Quantified',
-                hookText: '"We audited 140 Meta Ad accounts last month—here is the #1 reason your ROAS drops every Friday..."',
-                visualDirection: '9:16 split-screen showing live Meta Ads Manager graph spiking green while speaker points to key metric.'
-              },
-              {
-                angle: 'Social Proof + Risk Reversal (Warm Retargeting)',
-                hookText: '"Still comparing options? See how M.D.R.S. cut CPA by 38% in 72 hours without changing their landing page."',
-                visualDirection: 'Fast-paced UGC testimonial mashup with dynamic captions and bold green ROAS sticker overlay.'
-              },
-              {
-                angle: 'Problem-Agitate-Solve (Cold Broad)',
-                hookText: '"Stop boosting posts and praying. Use this 3-step creative testing framework instead."',
-                visualDirection: 'Over-the-shoulder iPad screen recording drawing out the 3:2:2 method in real time.'
-              }
-            ]
-          });
-          setIsAiLoading(false);
-          return;
-        }
-        await new Promise((r) => setTimeout(r, delays[retries]));
-        retries++;
-      }
-    }
+    try {
+      const data = await askAI(selectedAccount, payload);
+      const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
+      if (!text) throw new Error('AI returned no answer.');
+      setAiResponse(JSON.parse(text));
+    } catch (err) { setAiError(err.message); setAiResponse(null); }
+    finally { setIsAiLoading(false); }
   };
 
   const handleAddCustomCampaign = (e) => {
@@ -2093,7 +1864,7 @@ ${metricsSummary}`;
 
     setCampaigns((prev) => [newCmp, ...prev]);
     setNewCampaignForm({ ...newCampaignForm, name: '' });
-    showToast('Custom Campaign Injected!', `"${newCmp.name}" added to real-time telemetry and AI audit engine.`);
+    showToast('Local Scenario Added!', `"${newCmp.name}" added to real-time telemetry and AI audit engine.`);
     setActiveTab('overview');
   };
 
@@ -2317,342 +2088,9 @@ ${metricsSummary}`;
         </div>
       )}
 
-      {isLiveApiModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className={`w-full max-w-2xl rounded-2xl border p-6 shadow-2xl my-8 ${
-            darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
-          }`}>
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
-                  <Link2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-bold">Connect Live Meta Ads Graph API</h3>
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
-                      isLiveApiConnected
-                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
-                        : 'bg-amber-500/15 text-amber-400 border-amber-500/30'
-                    }`}>
-                      {isLiveApiConnected ? 'LIVE API CONNECTED' : 'DEMO MODE'}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    Automatically fetch your personal Ad Account + all Business Manager client Ad Accounts in real time
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsLiveApiModalOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {isLiveApiModalOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-5"><div className="builder-panel max-w-lg"><h2 className="text-xl font-bold">Server-managed connection</h2><p>Accounts are assigned in Manage clients. Tokens are stored only on the server. Contact MDRS if your data needs reconnection.</p><button className="builder-primary" onClick={()=>setIsLiveApiModalOpen(false)}>Close</button></div></div>}
 
-            {apiErrorMsg && (
-              <div className="mt-4 p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-start gap-2.5 text-xs text-rose-300">
-                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <strong className="font-semibold block text-rose-200">Meta Graph API Error:</strong>
-                  {apiErrorMsg}
-                </div>
-              </div>
-            )}
-
-            <div className="mt-5 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                <div className="sm:col-span-3">
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Meta Access Token (User Token or System User Token)
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="Paste EAABwzLixnjYBO... token here"
-                    value={metaApiToken}
-                    onChange={(e) => setMetaApiToken(e.target.value)}
-                    className={`w-full px-3.5 py-2.5 rounded-xl text-sm border focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                      darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                    }`}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                    Graph API Version
-                  </label>
-                  <select
-                    value={metaApiVersion}
-                    onChange={(e) => setMetaApiVersion(e.target.value)}
-                    className={`w-full px-3 py-2.5 rounded-xl text-sm border ${
-                      darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'
-                    }`}
-                  >
-                    <option value="v21.0">v21.0 (Latest)</option>
-                    <option value="v20.0">v20.0</option>
-                    <option value="v19.0">v19.0</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={rememberToken}
-                    onChange={(e) => setRememberToken(e.target.checked)}
-                    className="rounded border-slate-700 text-blue-600 focus:ring-blue-500"
-                  />
-                  Remember token in browser localStorage for instant auto-connect
-                </label>
-
-                <div className="flex items-center gap-2">
-                  {isLiveApiConnected && (
-                    <button
-                      onClick={handleDisconnectLiveApi}
-                      className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 flex items-center gap-1.5 transition"
-                    >
-                      <Unlink className="w-3.5 h-3.5" /> Disconnect & Use Demo
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleFetchAllManagedAccounts()}
-                    disabled={isFetchingAccounts}
-                    className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-600/30 flex items-center gap-2 disabled:opacity-50 transition"
-                  >
-                    {isFetchingAccounts ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" /> Fetching Ad Accounts...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="w-4 h-4" /> Fetch All My & Managed Ad Accounts
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {discoveredLiveAccounts.length > 0 && (
-              <div className="mt-6">
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                    Discovered Ad Accounts ({discoveredLiveAccounts.length})
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    Click any account to load its live campaigns immediately
-                  </span>
-                </div>
-                <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
-                  {discoveredLiveAccounts.map((acc) => {
-                    const isCurrent = selectedAccount === acc.id;
-                    return (
-                      <div
-                        key={acc.id}
-                        onClick={() => {
-                          setSelectedAccount(acc.id);
-                          setIsLiveApiModalOpen(false);
-                        }}
-                        className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
-                          isCurrent
-                            ? 'bg-blue-600/15 border-blue-500/50'
-                            : darkMode
-                            ? 'bg-slate-950/80 border-slate-800 hover:border-slate-700'
-                            : 'bg-slate-50 border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Building2 className="w-4 h-4 text-blue-400 shrink-0" />
-                          <div className="truncate">
-                            <p className="text-sm font-bold truncate">{acc.name}</p>
-                            <p className="text-[11px] text-slate-400">
-                              ID: <span className="font-mono text-slate-300">{acc.id}</span> • {acc.industry} • Currency: {acc.currency}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                            acc.status === 'ACTIVE'
-                              ? 'bg-emerald-500/15 text-emerald-400'
-                              : 'bg-amber-500/15 text-amber-400'
-                          }`}>
-                            {acc.status}
-                          </span>
-                          <ChevronRight className="w-4 h-4 text-slate-400" />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className={`mt-6 p-4 rounded-xl border text-xs space-y-2 ${
-              darkMode ? 'bg-slate-950/90 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
-            }`}>
-              <div className="font-bold text-blue-400 flex items-center gap-1.5">
-                <Info className="w-4 h-4" /> Kaise Nikalein Apna Meta Access Token (2 Minute Process):
-              </div>
-              <ol className="list-decimal list-inside space-y-1 text-slate-400 leading-relaxed">
-                <li>
-                  <strong className="text-slate-200">Meta Graph API Explorer</strong> (developers.facebook.com/tools/explorer) ya <strong className="text-slate-200">Business Settings → System Users</strong> open karein.
-                </li>
-                <li>
-                  Permissions me <code className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400">ads_read</code>, <code className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400">ads_management</code>, aur <code className="px-1.5 py-0.5 rounded bg-slate-800 text-emerald-400">business_management</code> select karein.
-                </li>
-                <li>
-                  <strong>Generate Access Token</strong> par click karke apne personal aur client Ad Accounts tick karein, aur token upar box me paste karke <strong>Fetch All My & Managed Ad Accounts</strong> dabayein.
-                </li>
-              </ol>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isShareModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className={`w-full max-w-2xl rounded-2xl border p-6 shadow-2xl my-8 ${
-            darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
-          }`}>
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-600/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
-                  <Share2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold">Share Client Portal & 24/7 Live Deployment</h3>
-                  <p className="text-xs text-slate-400">
-                    Show one client Ad Account in this view. This view filter is not an access-control boundary.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsShareModalOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="mt-5 space-y-5">
-              <div className={`p-4 rounded-xl border space-y-3.5 ${
-                darkMode ? 'bg-slate-950/90 border-slate-800' : 'bg-slate-50 border-slate-200'
-              }`}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                    <Lock className="w-3.5 h-3.5" /> 1. Generate Locked Client View Link
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    Selected Account: <strong className="text-slate-200">{selectedAccount}</strong>
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1">
-                      Select Client Ad Account to Lock
-                    </label>
-                    <select
-                      value={selectedAccount}
-                      onChange={(e) => setSelectedAccount(e.target.value)}
-                      className={`w-full px-3 py-2 rounded-xl text-xs font-semibold border ${
-                        darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-300'
-                      }`}
-                    >
-                      {adAccounts.map((acc) => (
-                        <option key={acc.id} value={acc.id}>
-                          {acc.name} ({acc.id})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-slate-400 mb-1">
-                      Client / Brand Display Name
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Aura E-Commerce Live Report"
-                      value={clientBrandName}
-                      onChange={(e) => setClientBrandName(e.target.value)}
-                      className={`w-full px-3 py-2 rounded-xl text-xs border ${
-                        darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-300'
-                      }`}
-                    />
-                  </div>
-                </div>
-
-                <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer pt-1">
-                  <input
-                    type="checkbox"
-                    checked={shareIncludeToken}
-                    onChange={(e) => setShareIncludeToken(e.target.checked)}
-                    className="rounded border-slate-700 text-emerald-600 focus:ring-emerald-500"
-                  />
-                  Include access token in link (Base64 only, not encryption; anyone with this link can recover the token)
-                </label>
-
-                <div className="flex items-center gap-2 pt-1">
-                  <input
-                    type="text"
-                    readOnly
-                    value={generatedClientUrl}
-                    className={`flex-1 px-3 py-2 rounded-xl text-xs font-mono border select-all ${
-                      darkMode ? 'bg-slate-900 border-slate-800 text-slate-300' : 'bg-white border-slate-300 text-slate-700'
-                    }`}
-                  />
-                  <button
-                    onClick={handleCopyClientLink}
-                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5 shrink-0 shadow-lg shadow-emerald-600/25"
-                  >
-                    {copiedLinkSuccess ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                    {copiedLinkSuccess ? 'Copied!' : 'Copy Client Link'}
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-slate-800/70">
-                  <span className="text-[11px] text-slate-400">
-                    Want to see how this looks to your client?
-                  </span>
-                  <button
-                    onClick={() => {
-                      setIsClientLockedMode(true);
-                      setIsShareModalOpen(false);
-                      showToast('Client Read-Only Mode Enabled', 'Account selector and API settings are now hidden.');
-                    }}
-                    className="text-xs font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1"
-                  >
-                    <Eye className="w-3.5 h-3.5" /> Preview Client Read-Only View
-                  </button>
-                </div>
-              </div>
-
-              <div className={`p-4 rounded-xl border text-xs space-y-2.5 ${
-                darkMode ? 'bg-slate-950/60 border-slate-800 text-slate-300' : 'bg-slate-100 border-slate-200 text-slate-700'
-              }`}>
-                <div className="font-bold text-blue-400 flex items-center gap-1.5 text-sm">
-                  <Rocket className="w-4 h-4" /> 2. Ise 24/7 Online (Live) Kaise Rakhein (Free Hosting on Vercel):
-                </div>
-                <ol className="list-decimal list-inside space-y-1.5 text-slate-400 leading-relaxed">
-                  <li>
-                    Provided project ZIP extract karein aur saari files GitHub repository root me upload karein, including package.json aur src folder.
-                  </li>
-                  <li>
-                    Code ko GitHub par upload karein aur <strong>Vercel.com</strong> (ya Netlify) par Free account banakar apna GitHub repo import karein.
-                  </li>
-                  <li>
-                    Vercel me Vite preset, build command npm run build aur output directory dist select karein. Deploy hone ke baad API Setup me Meta token enter karein. VITE_ variables public browser bundle me include hote hain; secret tokens wahan na rakhein.
-                  </li>
-                  <li>
-                    Deployment URL par dashboard khulega. Live Sync browser tab khula rehne par data refresh karta hai; background server worker ya webhook is project me nahi hai.
-                  </li>
-                </ol>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {isShareModalOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-5"><div className="builder-panel max-w-lg"><h2 className="text-xl font-bold">Share secure client portal</h2><p>Each client must sign in. The server grants access only to their assigned business, even if this link is forwarded.</p><input readOnly value={generatedClientUrl}/><button className="builder-primary" onClick={handleCopyClientLink}>{copiedLinkSuccess?'Copied':'Copy login link'}</button><button className="builder-primary" onClick={()=>setIsShareModalOpen(false)}>Close</button></div></div>}
 
       {simulatedLiftModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -2726,7 +2164,7 @@ ${metricsSummary}`;
       }`}>
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3, badge: null },
-          { id: 'create-campaign', label: 'Create', icon: Rocket, badge: null },
+          ...(!isClientLockedMode ? [{ id: 'create-campaign', label: 'Create', icon: Rocket, badge: null }] : []),
           { id: 'campaigns', label: 'Campaigns', icon: Layers, badge: campaigns.length },
           { id: 'audience', label: 'Audience', icon: PieChartIcon, badge: null },
           { id: 'ai-hub', label: 'AI Tips', icon: Sparkles, badge: aiSuggestions.filter((s) => !s.applied).length },
@@ -2822,7 +2260,7 @@ ${metricsSummary}`;
             <nav className="hidden lg:flex p-3 lg:flex-col gap-1.5 overflow-x-auto">
               {[
                 { id: 'overview', label: 'Executive Overview', icon: BarChart3, badge: null },
-                { id: 'create-campaign', label: 'Create Campaign', icon: Rocket, badge: null },
+                ...(!isClientLockedMode ? [{ id: 'create-campaign', label: 'Create Campaign', icon: Rocket, badge: null }] : []),
                 { id: 'campaigns', label: 'Campaigns & Creatives', icon: Layers, badge: campaigns.length },
                 { id: 'audience', label: 'Audience & Placements', icon: PieChartIcon, badge: null },
                 { id: 'ai-hub', label: 'AI Optimization Hub', icon: Sparkles, badge: aiSuggestions.filter(s => !s.applied).length, badgeColor: 'bg-rose-500 text-white' },
@@ -2899,16 +2337,10 @@ ${metricsSummary}`;
                         <span className="text-xs font-bold text-white block truncate">
                           {clientBrandName || adAccounts.find((a) => a.id === selectedAccount)?.name || 'Live Client Telemetry'}
                         </span>
-                        <span className="text-[10px] text-emerald-400 block truncate">Verified Real-Time Meta Ads Feed</span>
+                        <span className="text-[10px] text-emerald-400 block truncate">Private account report</span>
                       </div>
                     </div>
-                    <button
-                      onClick={() => setIsClientLockedMode(false)}
-                      title="Exit Client Preview (Admin)"
-                      className="text-[10px] px-2 py-1 rounded bg-slate-800 text-slate-300 hover:text-white shrink-0"
-                    >
-                      Admin
-                    </button>
+
                   </div>
                 ) : (
                   <div className="relative flex-1 sm:flex-initial min-w-[200px] max-w-full">
@@ -2987,7 +2419,7 @@ ${metricsSummary}`;
                   <button
                     onClick={() => {
                       if (isLiveApiConnected) {
-                        fetchLiveAccountTelemetry(selectedAccount, metaApiToken, datePreset);
+                        fetchLiveAccountTelemetry(selectedAccount, null, datePreset);
                       } else {
                         setLiveSync(!liveSync);
                       }
@@ -3249,10 +2681,10 @@ ${metricsSummary}`;
                                   Simulate Impact
                                 </button>
                                 <button
-                                  onClick={() => handleApplyOptimization(sug)}
+                                  disabled={isClientLockedMode} onClick={() => handleApplyOptimization(sug)}
                                   className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow shadow-blue-600/30 transition flex items-center gap-1"
                                 >
-                                  <Zap className="w-3.5 h-3.5" /> Apply Fix
+                                  <Zap className="w-3.5 h-3.5" /> Simulate Fix
                                 </button>
                               </>
                             ) : (
@@ -4037,11 +3469,7 @@ ${metricsSummary}`;
                   </div>
 
                   <div className="mt-5 space-y-2">
-                    <label htmlFor="gemini-key" className="block text-xs font-medium text-slate-400">Gemini API key (session only)</label>
-                    <input id="gemini-key" type="password" autoComplete="off"
-                      value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)}
-                      placeholder="Paste your Gemini API key"
-                      className="w-full px-4 py-3 rounded-xl text-sm border bg-slate-950 border-slate-700 text-white" />
+                    <p className="text-sm">AI requests use the server-managed connection.</p>
                     {aiError && <p role="alert" className="text-sm text-amber-400">{aiError}</p>}
                   </div>
 
@@ -4141,9 +3569,9 @@ ${metricsSummary}`;
               </section>
             )}
 
-            {activeTab === 'create-campaign' && <CampaignBuilder key={selectedAccount} account={selectedAccount} currency={activeCurrencyCode} token={isClientLockedMode ? '' : metaApiToken} version={metaApiVersion} geminiKey={geminiApiKey} setGeminiKey={setGeminiApiKey} />}
+            {!isClientLockedMode && activeTab === 'create-campaign' && <CampaignBuilder key={selectedAccount} account={selectedAccount} currency={activeCurrencyCode} />}
 
-            {activeTab === 'data-input' && (
+            {!isClientLockedMode && activeTab === 'data-input' && (
               <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className={`p-6 rounded-2xl border ${
                   darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
@@ -4221,72 +3649,7 @@ ${metricsSummary}`;
                   </form>
                 </div>
 
-                <div className={`p-6 rounded-2xl border flex flex-col justify-between ${
-                  darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
-                }`}>
-                  <div>
-                    <h2 className="text-lg font-bold flex items-center gap-2 mb-1">
-                      <Key className="w-5 h-5 text-emerald-400" /> Meta Graph API v21.0 Connector
-                    </h2>
-                    <p className="text-xs text-slate-400 mb-5">
-                      Connect your Meta Business Suite Ad Account ID and Marketing API token for real-time webhook synchronization.
-                    </p>
-
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-xs font-medium text-slate-400 mb-1">Meta Ad Account ID</label>
-                        <input
-                          type="text"
-                          value={metaAdAccountId}
-                          onChange={(e) => setMetaAdAccountId(e.target.value)}
-                          className={`w-full px-3.5 py-2 rounded-xl text-sm border ${
-                            darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300'
-                          }`}
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-medium text-slate-400 mb-1">
-                          System User Access Token (ads_read, ads_management)
-                        </label>
-                        <input
-                          type="password"
-                          placeholder="EAABwzLixnjYBO..."
-                          value={metaApiToken}
-                          onChange={(e) => setMetaApiToken(e.target.value)}
-                          className={`w-full px-3.5 py-2 rounded-xl text-sm border ${
-                            darkMode ? 'bg-slate-950 border-slate-800 text-white' : 'bg-slate-50 border-slate-300'
-                          }`}
-                        />
-                      </div>
-
-                      <button
-                        onClick={() => handleFetchAllManagedAccounts()}
-                        disabled={isFetchingAccounts}
-                        className="w-full py-2.5 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/25 transition flex items-center justify-center gap-2 disabled:opacity-50"
-                      >
-                        {isFetchingAccounts ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" /> Connecting & Fetching Accounts...
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="w-4 h-4" /> Test & Sync All Managed Ad Accounts
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 space-y-1.5">
-                    <div className="font-semibold text-slate-200 flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Active Telemetry Endpoints:
-                    </div>
-                    <p>• <span className="font-mono text-blue-400">/v21.0/me/adaccounts</span></p>
-                    <p>• <span className="font-mono text-blue-400">/v21.0/insights</span></p>
-                    <p>• Conversions API (CAPI) Match Quality: 9.8 / 10</p>
-                  </div>
-                </div>
+                <div className="builder-panel"><h2 className="font-bold">Server-managed connections</h2><p>Use Manage clients to assign accounts. Add Meta credentials only to Vercel server environment variables, then redeploy. Client users cannot access these settings.</p><p>Custom data entered here is a local scenario only; it does not edit Meta.</p></div>
               </section>
             )}
           </main>

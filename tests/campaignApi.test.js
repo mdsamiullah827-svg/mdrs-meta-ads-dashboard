@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createPausedCampaign, validateCampaign } from '../src/campaignApi.js';
+import { createPausedCampaign, validateCampaign } from '../server/campaignApi.js';
 const form={account:'act_123',name:'Test campaign',page:'123',budget:'4.50',countries:'NP',ageMin:'18',ageMax:'65',website:'https://example.com',image:'https://example.com/image.jpg',headline:'Test',message:'Test copy',ordinary:true,reviewed:true,cta:'LEARN_MORE',currency:'USD'};
 test('creates four ordered objects paused with minor-unit budget', async()=>{
  const calls=[];const ids=await createPausedCampaign(form,'mock-token','v25.0',()=>{},async(url,init)=>{
