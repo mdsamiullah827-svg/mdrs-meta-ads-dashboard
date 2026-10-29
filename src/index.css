@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+body { margin: 0; min-width: 320px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+* { box-sizing: border-box; }
+
+/* Theme tokens also cover legacy cards with fixed dark utilities. */
+[data-theme="light"] { color-scheme: light; --panel:#fff; --ink:#0f172a; --muted:#475569; --line:#cbd5e1; }
+[data-theme="dark"] { color-scheme: dark; --panel:#0f172a; --ink:#f1f5f9; --muted:#cbd5e1; --line:#334155; }
+[data-theme="light"] :is([class*="bg-slate-9"],[class*="bg-slate-8"],[class*="bg-slate-7"]) { background-color:#f1f5f9 !important; }
+[data-theme="light"] :is(.text-white,[class*="text-slate-1"],[class*="text-slate-2"],[class*="text-slate-3"]) { color:#0f172a !important; }
+[data-theme="light"] :is([class*="text-slate-4"],[class*="text-slate-5"]) { color:#475569 !important; }
+[data-theme="light"] :is([class*="text-blue-3"],[class*="text-blue-4"],[class*="text-indigo-3"],[class*="text-indigo-4"]) { color:#1d4ed8 !important; }
+[data-theme="light"] :is([class*="text-emerald-3"],[class*="text-emerald-4"],[class*="text-green-4"]) { color:#047857 !important; }
+[data-theme="light"] :is([class*="text-amber-3"],[class*="text-amber-4"],[class*="text-yellow-4"]) { color:#92400e !important; }
+[data-theme="light"] :is([class*="text-rose-3"],[class*="text-rose-4"],[class*="text-red-4"]) { color:#be123c !important; }
+[data-theme="light"] :is([class*="text-violet-3"],[class*="text-violet-4"],[class*="text-purple-4"]) { color:#6d28d9 !important; }
+[data-theme="light"] :is([class*="border-slate-7"],[class*="border-slate-8"]) { border-color:#cbd5e1 !important; }
+[data-theme="light"] :is(button,a)[class*="bg-blue-6"],
+[data-theme="light"] :is(button,a)[class*="bg-emerald-6"],
+[data-theme="light"] :is(button,a)[class*="bg-gradient-"] { color:white !important; }
+[data-theme="light"] :is(button,a)[class*="bg-blue-6"] *,
+[data-theme="light"] :is(button,a)[class*="bg-gradient-"] * { color:inherit !important; }
+[data-theme="light"] .recharts-text { fill:#334155; }
+.builder-panel { background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:24px; }
+.builder-panel label { display:block;font-size:13px;font-weight:600;margin:12px 0; }
+.builder-panel :is(input,textarea,select) { display:block;width:100%;margin-top:6px;padding:10px 12px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px; }
+.builder-panel input[type=checkbox] { display:inline;width:auto;margin-right:8px; }
+.builder-panel small { color:var(--muted); }
+.builder-panel button { padding:10px 14px;border:1px solid var(--line);border-radius:8px; }
+.builder-panel button:disabled { opacity:.5;cursor:not-allowed; }
+.builder-primary { background:#2563eb!important;color:white!important; }
+[data-theme="light"] :is([class*="text-cyan-3"],[class*="text-cyan-4"],[class*="text-teal-3"],[class*="text-teal-4"]) { color:#0e7490 !important; }
+[data-theme="light"] :is([class*="text-pink-3"],[class*="text-pink-4"],[class*="text-fuchsia-4"]) { color:#a21caf !important; }
+[data-theme="light"] .bg-clip-text { background-image:none!important;color:#0f172a!important;-webkit-text-fill-color:#0f172a; }
+[data-theme="light"] :is(button,a)[class*="bg-emerald-600/"] { color:#047857!important; }
+[data-theme="light"] :is(button,a)[class*="bg-blue-600/"] { color:#1d4ed8!important; }
+
+@media print {
+  @page { size: A4 landscape; margin: 12mm; }
+  [role="dialog"], aside, nav, header, button, [class*="fixed"] { display:none!important; }
+  body, #root, [data-theme], main { background:white!important;color:#111827!important;overflow:visible!important;height:auto!important; }
+  [data-theme] * { color:#111827!important;text-shadow:none!important;box-shadow:none!important; }
+  [class*="overflow"] { overflow:visible!important; }
+  table { width:100%!important;font-size:9px!important; }
+  tr { break-inside:avoid; }
+}
+
+.print-report { display:none; }
+@media print {
+  [data-theme] > :not(.print-report) { display:none!important; }
+  [data-theme] > .print-report { display:block!important; }
+  .print-report th, .print-report td { padding:8px;border:1px solid #cbd5e1;text-align:left;overflow-wrap:anywhere; }
+  .print-report table { border-collapse:collapse;table-layout:fixed; }
+}
