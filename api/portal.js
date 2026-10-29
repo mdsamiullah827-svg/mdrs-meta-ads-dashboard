@@ -1,7 +1,7 @@
 import { randomUUID,randomBytes } from 'node:crypto';
 import { fromNodeHeaders } from 'better-auth/node';
 import { getAuth,getPool } from '../server/auth.js';
-import { HttpError,requireAdmin,authorizeAccount,checkOrigin,cleanMeta } from '../server/security.js';
+import { HttpError,requireAdmin,authorizeAccount,checkOrigin,cleanMeta,metaQuery } from '../server/security.js';
 import { readMeta,tokenFor } from '../server/meta.js';
 import { createPausedCampaign,validateCampaign } from '../server/campaignApi.js';
 export const config={maxDuration:60};
@@ -53,15 +53,23 @@ export default async function handler(req,res){
   if(action==='ai'&&req.method==='POST'){
     const account=await accountFor(user,body.account);await rate('ai:'+user.id,10,3600);
     const key=process.env.GEMINI_API_KEY;if(!key)throw new HttpError(503,'AI is not configured yet. Contact MDRS.');
-    const report=await readMeta(account,'insights',{date_preset:['today','yesterday','last_7d','last_30d','data_maximum'].includes(body.preset)?body.preset:'last_30d',fields:'spend,impressions,reach,clicks,ctr,actions,action_values,purchase_roas'});
+    const rangeInput=body.reportQuery||{date_preset:'last_30d'};
+    if(Object.keys(rangeInput).some(k=>!['date_preset','time_range'].includes(k)))throw new HttpError(400,'Invalid AI reporting period.');
+    const reportQuery=Object.fromEntries(metaQuery(rangeInput));
+    const report=await readMeta(account,'insights',{...reportQuery,fields:'date_start,date_stop,spend,impressions,reach,clicks,ctr,actions,action_values,purchase_roas'});
     const prompt=body.payload?.contents?.[0]?.parts?.filter(p=>typeof p.text==='string').map(p=>p.text).join('\n')||body.prompt;
     if(!validText(prompt,20000))throw new HttpError(400,'Enter a shorter question.');
     const payload={contents:[{parts:[{text:prompt+'\nVerified account data (only this account): '+JSON.stringify(report)}]}],systemInstruction:{parts:[{text:'You are a reporting assistant. Explain only the provided account data. No tools or account changes are available. Do not claim to access other clients or apply changes. Never guarantee results. Currency: '+account.currency}]} ,generationConfig:{maxOutputTokens:4000}};
     if(body.payload?.generationConfig?.responseSchema){payload.generationConfig.responseMimeType='application/json';payload.generationConfig.responseSchema=body.payload.generationConfig.responseSchema;}
-    const model=process.env.GEMINI_MODEL||'gemini-2.5-flash';
+    const model=process.env.GEMINI_MODEL||'gemini-3.8-flash';
     if(!/^[a-z0-9.-]+$/.test(model))throw new HttpError(503,'AI model is not configured.');
     const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key},body:JSON.stringify(payload),signal:AbortSignal.timeout(40000)});
-    if(!response.ok)throw new HttpError(502,'AI service unavailable. Try again later.');
+    if(!response.ok){
+      if(response.status===429)throw new HttpError(429,'AI quota or rate limit reached. Contact MDRS or try again later.');
+      if([400,401,403].includes(response.status))throw new HttpError(502,'AI request or API key configuration was rejected. Contact MDRS.');
+      if(response.status===404)throw new HttpError(502,'Configured AI model is unavailable. Contact MDRS.');
+      throw new HttpError(502,'AI service unavailable. Try again later.');
+    }
     const data=await response.json();return res.json(cleanMeta({candidates:data.candidates},[key]));
   }
   requireAdmin(user);

@@ -68,3 +68,11 @@ npm run build
 `npm run dev` runs the frontend only; Vercel functions require `vercel dev` with a dedicated development database and environment. Do not point development or untrusted preview branches at production secrets. No client accounts or live ad mutations are created during tests.
 
 Tests cover the real Better Auth username/password/session flow using a temporary SQLite database, signup rejection, password hashing, password change/logout, tenant authorization, admin MFA gates, query allowlisting, secret redaction, origin checks and paused campaign sequencing/failure handling.
+
+## Reporting update
+
+Clients can switch between the active accounts returned by their authenticated account list. Backend membership checks still apply on every request. Today is the initial period; Meta account timezone and returned reporting dates are shown. Custom time accepts inclusive YYYY-MM-DD start/end dates, validated in both UI and backend and reused for all breakdowns and AI account summaries. Report errors are visible and block exports.
+
+PDF exports use direct text/table pagination for Latin reports, and browser-rendered fallback for non-Latin names. Period headers wrap above the table on every page.
+
+Gemini uses server-only GEMINI_API_KEY and optional GEMINI_MODEL (default gemini-3.8-flash). Add the API key as a Production Secret in Vercel and redeploy; it is never entered into the client dashboard. Missing key, rejected configuration, quota limits and unavailable models produce explicit errors.

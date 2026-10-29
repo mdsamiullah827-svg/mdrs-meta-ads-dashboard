@@ -11,7 +11,7 @@ export async function readMeta(account,edge,input){
  const params=metaQuery(input);let rows=[],after=null;
  for(let page=0;page<30;page++){
    if(after)params.set('after',after);
-   const response=await fetch(`https://graph.facebook.com/${version}/${account.account_id}${edge?'/'+edge:''}?${params}`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20000),redirect:'error'});
+   const response=await fetch(`https://graph.facebook.com/${version}/${account.account_id}${edge?'/'+edge:''}?${params}`,{cache:'no-store',headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20000),redirect:'error'});
    const data=await response.json();
    if(!response.ok||data.error){
      const code=data.error?.code;throw new HttpError(502,code===190?'Meta connection expired. Contact MDRS to reconnect.':`Meta could not return this report (code ${Number(code)||response.status}). Contact MDRS if this continues.`);

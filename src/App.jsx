@@ -1,3 +1,4 @@
+import { reportingQuery, periodLabel, validRange } from './reporting.js';
 import { metaFetch, askAI } from './portalApi.js';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { buildCampaignCSV } from './csvExport.js';
@@ -574,7 +575,13 @@ export default function App({ portalUser, portalAccounts }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [adAccounts, setAdAccounts] = useState(portalAccounts);
   const [selectedAccount, setSelectedAccount] = useState(portalAccounts[0]?.id || '');
-  const [datePreset, setDatePreset] = useState('Last 30 Days');
+  const [datePreset, setDatePreset] = useState('Today');
+  const [customRange, setCustomRange] = useState({since:'',until:''});
+  const [dateDraft, setDateDraft] = useState({since:'',until:''});
+  const [showCustomDates, setShowCustomDates] = useState(false);
+  const [accountTimezone, setAccountTimezone] = useState('');
+  const [reportedRange, setReportedRange] = useState(null);
+  const reportPeriod = periodLabel(datePreset, customRange, reportedRange);
   const [liveSync, setLiveSync] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState('Just now');
   const [livePulseCount, setLivePulseCount] = useState(0);
@@ -601,6 +608,7 @@ export default function App({ portalUser, portalAccounts }) {
 
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiResponse, setAiResponse] = useState(null);
+  const aiRequestRef = useRef(0);
   const [aiError, setAiError] = useState('');
   const [aiPromptInput, setAiPromptInput] = useState('');
   const [aiSelectedFocus, setAiSelectedFocus] = useState('Full Account Audit & Scaling Plan');
@@ -651,19 +659,6 @@ export default function App({ portalUser, portalAccounts }) {
 
   const fmtMoney = (val, decimals = 2) => formatCurrency(val, decimals, activeCurrencySymbol);
 
-  const mapDatePresetToMeta = (preset) => {
-    switch (preset) {
-      case 'Today': return 'today';
-      case 'Yesterday': return 'yesterday';
-      case 'Last 7 Days': return 'last_7d';
-      case 'Last 30 Days': return 'last_30d';
-      // Meta Graph API v20.0+ / v21.0 requires 'data_maximum' instead of deprecated 'maximum'
-      case 'Maximum (Lifetime)': return 'data_maximum';
-      case 'Custom (Q4 Peak)': return 'data_maximum';
-      default: return 'last_30d';
-    }
-  };
-
   const extractMetaActionMetric = (actionsArr, actionTypes) => {
     if (!Array.isArray(actionsArr)) return 0;
     for (const type of actionTypes) {
@@ -689,11 +684,10 @@ export default function App({ portalUser, portalAccounts }) {
     setIsFetchingLiveInsights(true);
     setExactAccountOverview(null); setCampaigns([]); setTimeSeries([]); setPlacements([]); setDemographics([]); setRegionsData([]); setCountriesData([]);
     setApiErrorMsg(null);
-    const metaPreset = mapDatePresetToMeta(presetOverride || datePreset);
+    const dateQuery = new URLSearchParams(reportingQuery(presetOverride || datePreset, customRange)).toString();
+    setReportedRange(null); setAccountTimezone('');
     const pool = accountsPoolOverride || discoveredLiveAccounts;
 
-    // Build a helper for date query param with automatic fallback if 'data_maximum' isn't supported on older API versions
-    const getDateQueryParam = (presetCode) => `date_preset=${presetCode}`;
 
     try {
       const targetAccountIds =
@@ -704,8 +698,8 @@ export default function App({ portalUser, portalAccounts }) {
       const primaryAct = targetAccountIds[0];
 
       // 0. Fetch exact Ad Account currency & name metadata + Account-Level summary
-      const accInfoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}?fields=id,name,currency,account_status,business_name,amount_spent`;
-      let accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&${getDateQueryParam(metaPreset)}&fields=spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,results,cost_per_result,purchase_roas`;
+      const accInfoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}?fields=id,name,currency,timezone_name,account_status,business_name,amount_spent`;
+      let accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&${dateQuery}&fields=date_start,date_stop,spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,results,cost_per_result,purchase_roas`;
 
       let [accInfoRes, accSumRes] = await Promise.all([
         metaFetch(accInfoUrl),
@@ -714,19 +708,22 @@ export default function App({ portalUser, portalAccounts }) {
       const accInfoJson = await accInfoRes.json();
       let accSumJson = await accSumRes.json();
 
-      // Fallback if the user selected 'v19.0' where 'maximum' or 'results' is not supported
-      let effectiveMetaPreset = metaPreset;
+      // Retry a smaller field set while preserving the exact reporting period.
+
       if (accSumJson?.error) {
-        if (metaPreset === 'data_maximum') {
-          effectiveMetaPreset = 'maximum';
-        }
-        accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&date_preset=${effectiveMetaPreset}&fields=spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,purchase_roas`;
+
+        accSummaryInsightsUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?level=account&${dateQuery}&fields=date_start,date_stop,spend,impressions,reach,frequency,clicks,inline_link_clicks,ctr,inline_link_click_ctr,cpc,cpm,actions,action_values,cost_per_action_type,purchase_roas`;
         accSumRes = await metaFetch(accSummaryInsightsUrl);
         accSumJson = await accSumRes.json();
       }
 
       if (currentFetchId !== activeFetchIdRef.current) return;
 
+      if (accInfoJson?.error) throw new Error(accInfoJson.error.message);
+      if (accSumJson?.error) throw new Error(accSumJson.error.message);
+      setAccountTimezone(accInfoJson.timezone_name || '');
+      const summaryRow = accSumJson.data?.[0];
+      if(summaryRow?.date_start && summaryRow?.date_stop) setReportedRange({since:summaryRow.date_start,until:summaryRow.date_stop});
       if (accInfoJson && !accInfoJson.error) {
         setAdAccounts((prev) => {
           const exists = prev.some((a) => a.id === primaryAct);
@@ -803,7 +800,7 @@ export default function App({ portalUser, portalAccounts }) {
 
       const campaignPromises = targetAccountIds.map(async (actId) => {
         // Fetch BOTH all campaign insights (which includes deleted/archived campaigns that spent in the period) AND campaign metadata
-        let insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&date_preset=${effectiveMetaPreset}&fields=${campaignFields}&limit=500`;
+        let insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&${dateQuery}&fields=${campaignFields}&limit=500`;
         const campaignsMetaUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/campaigns?fields=id,name,effective_status,status,daily_budget,lifetime_budget,objective&limit=500`;
 
         let [insRes, cmpRes] = await Promise.all([metaFetch(insightsUrl), metaFetch(campaignsMetaUrl)]);
@@ -812,11 +809,13 @@ export default function App({ portalUser, portalAccounts }) {
 
         // Fallback if 'results,cost_per_result' fields are unsupported on older API version
         if (insJson?.error) {
-          insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&date_preset=${effectiveMetaPreset}&fields=${fallbackCampaignFields}&limit=500`;
+          insightsUrl = `https://graph.facebook.com/${metaApiVersion}/${actId}/insights?level=campaign&${dateQuery}&fields=${fallbackCampaignFields}&limit=500`;
           insRes = await metaFetch(insightsUrl);
           insJson = await insRes.json();
         }
 
+        if(insJson?.error) throw new Error(insJson.error.message);
+        if(cmpJson?.error) throw new Error(cmpJson.error.message);
         const insightMap = {};
         if (Array.isArray(insJson?.data)) {
           insJson.data.forEach((row) => {
@@ -1088,11 +1087,11 @@ export default function App({ portalUser, portalAccounts }) {
       }
 
       // Fetch Time-Series, Placements, Age/Gender & Country/Region in parallel for the selected Ad Account
-      const timeSeriesUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&time_increment=1&fields=date_start,spend,impressions,inline_link_clicks,clicks,ctr,actions,action_values&limit=90`;
-      const placementUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=publisher_platform,platform_position&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,cpc,cpm,actions,action_values&limit=50`;
-      const demoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=age,gender&fields=spend,impressions,reach,inline_link_clicks,clicks,actions,action_values&limit=100`;
-      const regionUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=country,region&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100`;
-      const countryUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?date_preset=${effectiveMetaPreset}&breakdowns=country&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100`;
+      const timeSeriesUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&time_increment=1&fields=date_start,spend,impressions,inline_link_clicks,clicks,ctr,actions,action_values&limit=90`;
+      const placementUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&breakdowns=publisher_platform,platform_position&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,cpc,cpm,actions,action_values&limit=50`;
+      const demoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&breakdowns=age,gender&fields=spend,impressions,reach,inline_link_clicks,clicks,actions,action_values&limit=100`;
+      const regionUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&breakdowns=country,region&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100`;
+      const countryUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&breakdowns=country&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100`;
 
       const [tsRes, plRes, demoRes, regRes, cntRes] = await Promise.all([
         metaFetch(timeSeriesUrl),
@@ -1354,10 +1353,13 @@ export default function App({ portalUser, portalAccounts }) {
   };
 
   useEffect(() => {
+    setSelectedCampaignId(null);
+    aiRequestRef.current += 1; setAiResponse(null); setAiError(''); setIsAiLoading(false);
+    setCsvExport(null); setPdfUrl('');
     if (isLiveApiConnected) {
       fetchLiveAccountTelemetry(selectedAccount, null, datePreset);
     }
-  }, [selectedAccount, datePreset, isLiveApiConnected]);
+  }, [selectedAccount, datePreset, customRange, isLiveApiConnected]);
 
   useEffect(() => {
     if (!liveSync) return;
@@ -1426,7 +1428,7 @@ export default function App({ portalUser, portalAccounts }) {
     }, 3200);
 
     return () => clearInterval(interval);
-  }, [liveSync, isLiveApiConnected, selectedAccount, null, datePreset]);
+  }, [liveSync, isLiveApiConnected, selectedAccount, datePreset, customRange]);
 
   const dateMultiplier = useMemo(() => {
     if (isLiveApiConnected) return 1.0;
@@ -1753,6 +1755,8 @@ export default function App({ portalUser, portalAccounts }) {
   const toggleCampaignStatus = (id, e) => { e.stopPropagation(); showToast('Read-only report', 'Use Meta Ads Manager to change campaign status.'); };
 
   const handleAskGeminiStrategist = async (customQuery) => {
+    if(isFetchingLiveInsights || apiErrorMsg){showToast('Report not ready','Load the report before asking for AI analysis.');return;}
+    const aiRequest = ++aiRequestRef.current;
     setAiError('');
     setIsAiLoading(true);
     setAiResponse(null);
@@ -1826,12 +1830,13 @@ ${metricsSummary}`;
     };
 
     try {
-      const data = await askAI(selectedAccount, payload);
+      const data = await askAI(selectedAccount, payload, reportingQuery(datePreset, customRange));
+      if(aiRequest !== aiRequestRef.current) return;
       const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('');
       if (!text) throw new Error('AI returned no answer.');
       setAiResponse(JSON.parse(text));
-    } catch (err) { setAiError(err.message); setAiResponse(null); }
-    finally { setIsAiLoading(false); }
+    } catch (err) { if(aiRequest === aiRequestRef.current){setAiError(err.message); setAiResponse(null);} }
+    finally { if(aiRequest === aiRequestRef.current)setIsAiLoading(false); }
   };
 
   const handleAddCustomCampaign = (e) => {
@@ -1869,12 +1874,13 @@ ${metricsSummary}`;
   };
 
   const handleExportCSV = () => {
+    if(isFetchingLiveInsights || apiErrorMsg) {showToast('Report not ready', 'Wait for the report to load successfully before exporting.'); return;}
     try {
       const csv = buildCampaignCSV(enrichedCampaigns, activeCurrencyCode);
-      const filename = `Meta_Ads_Report_${datePreset.replace(/[^a-zA-Z0-9_-]+/g, '_')}.csv`;
+      const filename = `Meta_Ads_Report_${reportPeriod.replace(/[^a-zA-Z0-9_-]+/g, '_')}.csv`;
       const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
       setPdfUrl('');
-      setCsvExport({ url, csv, filename, campaigns: enrichedCampaigns.map(c => ({...c})), currency: activeCurrencyCode, period: datePreset, account: adAccounts.find(a=>a.id===selectedAccount)?.name || selectedAccount, mode: isLiveApiConnected ? 'Meta API data' : 'DEMO SAMPLE DATA' });
+      setCsvExport({ url, csv, filename, campaigns: enrichedCampaigns.map(c => ({...c})), currency: activeCurrencyCode, period: reportPeriod, timezone: accountTimezone, account: adAccounts.find(a=>a.id===selectedAccount)?.name || selectedAccount, mode: isLiveApiConnected ? 'Meta API data' : 'DEMO SAMPLE DATA' });
     } catch (error) {
       showToast('Export failed', error.message || 'Please try again.');
     }
@@ -1885,7 +1891,7 @@ ${metricsSummary}`;
     setPdfBusy(true);
     try {
       const blob = await makePDFReport(csvExport);
-      setPdfUrl(URL.createObjectURL(new Blob([blob], { type: 'application/octet-stream' })));
+      setPdfUrl(URL.createObjectURL(blob));
     } catch (error) { showToast('PDF export failed', error.message || 'Please try again.'); }
     finally { setPdfBusy(false); }
   };
@@ -1896,7 +1902,7 @@ ${metricsSummary}`;
       title: '1. Total Amount Spent',
       hindiSub: 'Exact Ad Spend in Period',
       value: fmtMoney(totals.spend),
-      subtitle: `Currency: ${activeCurrencyCode} (${activeCurrencySymbol}) • ${datePreset}`,
+      subtitle: `Currency: ${activeCurrencyCode} (${activeCurrencySymbol}) • ${reportPeriod}`,
       icon: DollarSign,
       color: 'from-blue-600/20 to-indigo-600/10 border-blue-500/40 text-blue-400',
       badge: 'Exact Meta Spend'
@@ -2329,24 +2335,14 @@ ${metricsSummary}`;
             <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
               {/* Account Selector & Currency Row */}
               <div className="flex flex-wrap items-center justify-between sm:justify-start gap-2 w-full xl:w-auto">
-                {isClientLockedMode ? (
-                  <div className="flex items-center justify-between w-full sm:w-auto gap-2.5 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                      <div className="min-w-0">
-                        <span className="text-xs font-bold text-white block truncate">
-                          {clientBrandName || adAccounts.find((a) => a.id === selectedAccount)?.name || 'Live Client Telemetry'}
-                        </span>
-                        <span className="text-[10px] text-emerald-400 block truncate">Private account report</span>
-                      </div>
-                    </div>
-
-                  </div>
-                ) : (
+                {isClientLockedMode && <span className={darkMode ? 'text-emerald-300 text-xs' : 'text-emerald-800 text-xs'}>{clientBrandName} · Read-only</span>}
                   <div className="relative flex-1 sm:flex-initial min-w-[200px] max-w-full">
                     <select
+                      aria-label="Ad account"
                       value={selectedAccount}
                       onChange={(e) => {
+                        activeFetchIdRef.current += 1;
+                        setCampaigns([]); setExactAccountOverview(null); setTimeSeries([]);
                         setSelectedAccount(e.target.value);
                         setSelectedCampaignId(null);
                       }}
@@ -2364,7 +2360,7 @@ ${metricsSummary}`;
                     </select>
                     <ChevronRight className="w-4 h-4 text-slate-400 rotate-90 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   </div>
-                )}
+
 
                 <div className="flex items-center gap-1.5 shrink-0">
                   <span className="px-2.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
@@ -2443,19 +2439,25 @@ ${metricsSummary}`;
                   </button>
                 </div>
 
+                {showCustomDates && <form className="flex flex-wrap items-end gap-2" onSubmit={e=>{e.preventDefault();if(!validRange(dateDraft)){showToast('Invalid dates','Choose real dates with the start on or before the end.');return;}setCustomRange({...dateDraft});setDatePreset('Custom time');setShowCustomDates(false);}}>
+                  <label className="text-xs">From<input aria-label="Start date" className="block rounded border p-2 text-slate-900 bg-white" type="date" required value={dateDraft.since} onChange={e=>{const value=e.target.value;setDateDraft(d=>({...d,since:value}));}}/></label>
+                  <label className="text-xs">To (inclusive)<input aria-label="End date" className="block rounded border p-2 text-slate-900 bg-white" type="date" required min={dateDraft.since} value={dateDraft.until} onChange={e=>{const value=e.target.value;setDateDraft(d=>({...d,until:value}));}}/></label>
+                  <button className="rounded bg-blue-600 px-3 py-2 text-white text-xs" type="submit">Apply dates</button>
+                  <button className="text-xs p-2" type="button" onClick={()=>setShowCustomDates(false)}>Cancel</button>
+                </form>}
                 {/* Horizontally Scrollable Date Presets on Mobile */}
                 <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto no-scrollbar">
                   <div className={`flex items-center p-1 rounded-xl border w-full sm:w-auto justify-between sm:justify-start shrink-0 ${
                     darkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-100 border-slate-200'
                   }`}>
-                    {['Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'Maximum (Lifetime)'].map((preset) => (
+                    {['Today', 'Yesterday', 'Last 7 Days', 'Last 30 Days', 'Maximum (Lifetime)', 'Custom time'].map((preset) => (
                       <button
                         key={preset}
-                        onClick={() => setDatePreset(preset)}
+                        onClick={() => {if(preset === 'Custom time') setShowCustomDates(true); else {setShowCustomDates(false);setDatePreset(preset);}}}
                         className={`px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap transition ${
                           datePreset === preset
                             ? 'bg-blue-600 text-white shadow'
-                            : 'text-slate-400 hover:text-slate-200'
+                            : darkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-700 hover:text-slate-950'
                         }`}
                       >
                         {preset === 'Maximum (Lifetime)' ? 'Lifetime' : preset}
@@ -2489,6 +2491,8 @@ ${metricsSummary}`;
                 </div>
               </div>
             </div>
+            <p className={darkMode ? 'text-xs text-slate-300 py-2' : 'text-xs text-slate-700 py-2'}>{reportPeriod} · {accountTimezone || 'Ad account timezone'}{datePreset === 'Today' ? ' · Today is still in progress; Meta results may be delayed.' : ''}</p>
+            {apiErrorMsg && <p role="alert" className="rounded bg-red-50 text-red-800 p-3 text-sm">Report could not be loaded: {apiErrorMsg} Use Refresh Live to retry. Empty values are not a confirmed zero-results report.</p>}
           </header>
 
           <main className="p-3 sm:p-5 lg:p-8 space-y-6 sm:space-y-8 max-w-[1600px] w-full mx-auto">
@@ -2511,7 +2515,7 @@ ${metricsSummary}`;
                           {isLiveApiConnected ? '✓ Exact Meta Ads Manager Live Data' : 'Demo Sample Data'}
                         </span>
                         <span className="text-xs font-semibold text-slate-400">
-                          • Period: <strong className="text-slate-200">{datePreset}</strong>
+                          • Period: <strong className="text-slate-200">{reportPeriod}</strong>
                         </span>
                       </div>
                       <h1 className="text-base sm:text-xl lg:text-2xl font-bold tracking-tight pt-0.5 break-words">
@@ -3436,7 +3440,7 @@ ${metricsSummary}`;
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                     <div>
                       <span className="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                        Powered by Gemini 3 Flash
+                        Powered by Gemini
                       </span>
                       <h2 className="text-xl lg:text-2xl font-bold mt-2">
                         AI Meta Ads Strategist & Creative Lab

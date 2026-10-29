@@ -1,5 +1,5 @@
 export async function portal(action,body){
- const r=await fetch('/api/portal?action='+encodeURIComponent(action),{method:body===undefined?'GET':'POST',credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+ const r=await fetch('/api/portal?action='+encodeURIComponent(action),{method:body===undefined?'GET':'POST',credentials:'same-origin',cache:'no-store',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
  const d=await r.json();if(!r.ok){if(r.status===401)window.dispatchEvent(new Event('portal-signed-out'));throw new Error(d.error?.message||d.error||'Request failed.');}return d;
 }
 export async function metaFetch(url){
@@ -8,4 +8,4 @@ export async function metaFetch(url){
  try{const data=await portal('meta',{account,edge,query});return {ok:true,json:async()=>data};}
  catch(e){return {ok:false,json:async()=>({error:{message:e.message}})};}
 }
-export async function askAI(account,payload){return portal('ai',{account,payload});}
+export async function askAI(account,payload,reportQuery={date_preset:'last_30d'}){return portal('ai',{account,payload,reportQuery});}
