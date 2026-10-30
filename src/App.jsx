@@ -1530,6 +1530,7 @@ export default function App({ portalUser, portalAccounts }) {
         acc.landingPageViews += cur.landingPageViews;
         acc.addToCart += cur.addToCart;
         acc.conversions += cur.conversions;
+        acc.messages += Number(cur.messages) || 0;
         acc.revenue += cur.revenue;
         if (cur.resultLabel && cur.conversions > 0) acc.resultLabel = cur.resultLabel;
         return acc;
@@ -1542,6 +1543,7 @@ export default function App({ portalUser, portalAccounts }) {
         landingPageViews: 0,
         addToCart: 0,
         conversions: 0,
+        messages: 0,
         revenue: 0,
         resultLabel: 'Results'
       }
@@ -1909,6 +1911,16 @@ ${metricsSummary}`;
       icon: DollarSign,
       color: 'from-blue-600/20 to-indigo-600/10 border-blue-500/40 text-blue-400',
       badge: 'Exact Meta Spend'
+    },
+    {
+      id: 'message-conversations',
+      title: 'Total Msg Conversations',
+      hindiSub: 'Messaging results in the selected period',
+      value: isFetchingLiveInsights || apiErrorMsg ? '—' : formatNumber(totals.messages || 0),
+      subtitle: isFetchingLiveInsights ? 'Loading messaging results…' : apiErrorMsg ? 'Report unavailable — retry to load results' : `Selected period: ${reportPeriod}`,
+      icon: MessageSquare,
+      color: 'from-emerald-600/20 to-teal-600/10 border-emerald-500/40 text-emerald-400',
+      badge: 'Messaging'
     },
     {
       title: `2. Total ${totals.resultLabel || 'Results'}`,
@@ -2563,7 +2575,8 @@ ${metricsSummary}`;
                       const Icon = card.icon;
                       return (
                         <div
-                          key={idx}
+                          key={card.id || idx}
+                          data-testid={card.id}
                           className={`p-5 rounded-2xl border bg-gradient-to-br transition-all hover:-translate-y-0.5 ${
                             darkMode
                               ? `${card.color} bg-slate-900/90`
