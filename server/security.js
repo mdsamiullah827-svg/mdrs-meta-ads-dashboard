@@ -21,7 +21,7 @@ export function metaQuery(input) {
    else if(k==='time_range'){let range;try{range=JSON.parse(v);}catch{throw new HttpError(400,'Invalid date range.');}if(!validRange(range)||Object.keys(range).some(k=>!['since','until'].includes(k)))throw new HttpError(400,'Invalid date range.');query.set(k,JSON.stringify({since:range.since,until:range.until}));}
    else if(k==='level'&&['account','campaign'].includes(v))query.set(k,v);
    else if(k==='breakdowns'&&['publisher_platform,platform_position','age,gender','country,region','country'].includes(v))query.set(k,v);
-   else if(k==='time_increment'&&v==='1')query.set(k,v);
+   else if(k==='time_increment'&&['1','monthly'].includes(v))query.set(k,v);
    else if(k==='limit'&&/^\d+$/.test(v)&&+v>0&&+v<=500)query.set(k,v);
    else throw new HttpError(400,'Unsupported reporting query.');
  }

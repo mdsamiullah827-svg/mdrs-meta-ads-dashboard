@@ -73,6 +73,14 @@ Tests cover the real Better Auth username/password/session flow using a temporar
 
 Clients can switch between the active accounts returned by their authenticated account list. Backend membership checks still apply on every request. Today is the initial period; Meta account timezone and returned reporting dates are shown. Custom time accepts inclusive YYYY-MM-DD start/end dates, validated in both UI and backend and reused for all breakdowns and AI account summaries. Report errors are visible and block exports.
 
-PDF exports use direct text/table pagination for Latin reports, and browser-rendered fallback for non-Latin names. Period headers wrap above the table on every page.
+PDF exports use direct text/table pagination for Latin reports, and small canvas-rendered text cells for non-Latin names (no full-page screenshots). Period headers wrap above the table on every page.
 
 Gemini uses server-only GEMINI_API_KEY and optional GEMINI_MODEL (default gemini-3.8-flash). Add the API key as a Production Secret in Vercel and redeploy; it is never entered into the client dashboard. Missing key, rejected configuration, quota limits and unavailable models produce explicit errors.
+
+## Lifetime, calendar and PDF fixes
+
+Lifetime requests are converted on the server to an explicit approximately 37-month range in the ad account timezone, inside the historical retention boundary. Responses include the covered dates, displayed in the dashboard. This is available API history, not an assurance of all-time totals. Lifetime charts use monthly granularity.
+
+Custom time opens a two-month clickable range calendar (one month on narrow screens) with month/year navigation, inclusive endpoints, Apply/Cancel and keyboard controls.
+
+Download PDF generates a PDF and triggers the download directly; the modal retains a download link as a fallback. CSV metadata no longer activates slow rasterization. Non-Latin names use small canvas text images, with a bundled Devanagari font, while other table content stays selectable text.

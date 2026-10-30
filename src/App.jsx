@@ -1,4 +1,5 @@
-import { reportingQuery, periodLabel, validRange } from './reporting.js';
+import DateRangePicker from './DateRangePicker.jsx';
+import { reportingQuery, periodLabel } from './reporting.js';
 import { metaFetch, askAI } from './portalApi.js';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { buildCampaignCSV } from './csvExport.js';
@@ -577,7 +578,6 @@ export default function App({ portalUser, portalAccounts }) {
   const [selectedAccount, setSelectedAccount] = useState(portalAccounts[0]?.id || '');
   const [datePreset, setDatePreset] = useState('Today');
   const [customRange, setCustomRange] = useState({since:'',until:''});
-  const [dateDraft, setDateDraft] = useState({since:'',until:''});
   const [showCustomDates, setShowCustomDates] = useState(false);
   const [accountTimezone, setAccountTimezone] = useState('');
   const [reportedRange, setReportedRange] = useState(null);
@@ -723,7 +723,8 @@ export default function App({ portalUser, portalAccounts }) {
       if (accSumJson?.error) throw new Error(accSumJson.error.message);
       setAccountTimezone(accInfoJson.timezone_name || '');
       const summaryRow = accSumJson.data?.[0];
-      if(summaryRow?.date_start && summaryRow?.date_stop) setReportedRange({since:summaryRow.date_start,until:summaryRow.date_stop});
+      if(accSumJson.reporting_range) setReportedRange(accSumJson.reporting_range);
+      else if(summaryRow?.date_start && summaryRow?.date_stop) setReportedRange({since:summaryRow.date_start,until:summaryRow.date_stop});
       if (accInfoJson && !accInfoJson.error) {
         setAdAccounts((prev) => {
           const exists = prev.some((a) => a.id === primaryAct);
@@ -1087,7 +1088,7 @@ export default function App({ portalUser, portalAccounts }) {
       }
 
       // Fetch Time-Series, Placements, Age/Gender & Country/Region in parallel for the selected Ad Account
-      const timeSeriesUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&time_increment=1&fields=date_start,spend,impressions,inline_link_clicks,clicks,ctr,actions,action_values&limit=90`;
+      const timeSeriesUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&time_increment=${datePreset === 'Maximum (Lifetime)' ? 'monthly' : '1'}&fields=date_start,spend,impressions,inline_link_clicks,clicks,ctr,actions,action_values&limit=90`;
       const placementUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&breakdowns=publisher_platform,platform_position&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,cpc,cpm,actions,action_values&limit=50`;
       const demoUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&breakdowns=age,gender&fields=spend,impressions,reach,inline_link_clicks,clicks,actions,action_values&limit=100`;
       const regionUrl = `https://graph.facebook.com/${metaApiVersion}/${primaryAct}/insights?${dateQuery}&breakdowns=country,region&fields=spend,impressions,reach,inline_link_clicks,clicks,ctr,actions,action_values&limit=100`;
@@ -1888,12 +1889,14 @@ ${metricsSummary}`;
 
   const handleExportPDF = async () => {
     if (!csvExport || pdfBusy) return;
+    let timeout;
     setPdfBusy(true);
     try {
-      const blob = await makePDFReport(csvExport);
-      setPdfUrl(URL.createObjectURL(blob));
+      const blob = await Promise.race([makePDFReport(csvExport),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('PDF preparation timed out. Please retry or export a shorter range.')),30000);})]);
+      const url=URL.createObjectURL(blob);setPdfUrl(url);
+      const link=document.createElement('a');link.href=url;link.download=csvExport.filename.replace(/\.csv$/,'.pdf');document.body.appendChild(link);link.click();link.remove();
     } catch (error) { showToast('PDF export failed', error.message || 'Please try again.'); }
-    finally { setPdfBusy(false); }
+    finally { clearTimeout(timeout);setPdfBusy(false); }
   };
 
   // Client-Friendly Primary 8 Cards (Includes Reach, Impressions, CPM, CTR, ROAS, Spend, Results & CPR)
@@ -2055,7 +2058,7 @@ ${metricsSummary}`;
             <div className="mt-5 flex flex-wrap gap-3">
               <a href={csvExport.url} download={csvExport.filename}
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold">Download CSV</a>
-              {pdfUrl ? <a href={pdfUrl} download={csvExport.filename.replace(/\.csv$/, '.pdf')} className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold">Download PDF</a> : <button disabled={pdfBusy} className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold" onClick={handleExportPDF}>{pdfBusy ? 'Preparing PDF…' : 'Prepare PDF'}</button>}
+              {pdfUrl ? <a href={pdfUrl} download={csvExport.filename.replace(/\.csv$/, '.pdf')} className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold">Download PDF</a> : <button disabled={pdfBusy} className="px-4 py-2 rounded-lg bg-blue-600 text-white font-semibold" onClick={handleExportPDF}>{pdfBusy ? 'Preparing PDF…' : 'Download PDF'}</button>}
               <button className="px-4 py-2 rounded-lg bg-slate-700" onClick={() => window.print()}>Print / Save as PDF</button>
               <button className="px-4 py-2 rounded-lg bg-slate-700" onClick={async () => {
                 try {
@@ -2439,12 +2442,7 @@ ${metricsSummary}`;
                   </button>
                 </div>
 
-                {showCustomDates && <form className="flex flex-wrap items-end gap-2" onSubmit={e=>{e.preventDefault();if(!validRange(dateDraft)){showToast('Invalid dates','Choose real dates with the start on or before the end.');return;}setCustomRange({...dateDraft});setDatePreset('Custom time');setShowCustomDates(false);}}>
-                  <label className="text-xs">From<input aria-label="Start date" className="block rounded border p-2 text-slate-900 bg-white" type="date" required value={dateDraft.since} onChange={e=>{const value=e.target.value;setDateDraft(d=>({...d,since:value}));}}/></label>
-                  <label className="text-xs">To (inclusive)<input aria-label="End date" className="block rounded border p-2 text-slate-900 bg-white" type="date" required min={dateDraft.since} value={dateDraft.until} onChange={e=>{const value=e.target.value;setDateDraft(d=>({...d,until:value}));}}/></label>
-                  <button className="rounded bg-blue-600 px-3 py-2 text-white text-xs" type="submit">Apply dates</button>
-                  <button className="text-xs p-2" type="button" onClick={()=>setShowCustomDates(false)}>Cancel</button>
-                </form>}
+                {showCustomDates && <DateRangePicker timezone={accountTimezone} value={customRange} onCancel={()=>setShowCustomDates(false)} onApply={range=>{setCustomRange(range);setDatePreset('Custom time');setShowCustomDates(false);}}/>}
                 {/* Horizontally Scrollable Date Presets on Mobile */}
                 <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto no-scrollbar">
                   <div className={`flex items-center p-1 rounded-xl border w-full sm:w-auto justify-between sm:justify-start shrink-0 ${
@@ -2492,6 +2490,7 @@ ${metricsSummary}`;
               </div>
             </div>
             <p className={darkMode ? 'text-xs text-slate-300 py-2' : 'text-xs text-slate-700 py-2'}>{reportPeriod} · {accountTimezone || 'Ad account timezone'}{datePreset === 'Today' ? ' · Today is still in progress; Meta results may be delayed.' : ''}</p>
+            {datePreset === 'Maximum (Lifetime)' && <p className="text-xs text-amber-700 bg-amber-50 rounded p-2">Lifetime shows available Meta API history, limited to approximately 37 months. Older activity is not included. See the exact reporting dates above.</p>}
             {apiErrorMsg && <p role="alert" className="rounded bg-red-50 text-red-800 p-3 text-sm">Report could not be loaded: {apiErrorMsg} Use Refresh Live to retry. Empty values are not a confirmed zero-results report.</p>}
           </header>
 

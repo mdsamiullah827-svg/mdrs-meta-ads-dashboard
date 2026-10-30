@@ -6,6 +6,13 @@ export function validDate(value) {
 export function validRange(range) {
   return !!range && validDate(range.since) && validDate(range.until) && range.since <= range.until;
 }
+export function availableHistoryRange(today=new Date().toISOString().slice(0,10)) {
+  const end=new Date(today+'T00:00:00Z');
+  const start=new Date(Date.UTC(end.getUTCFullYear(),end.getUTCMonth()-37,1));
+  const days=new Date(Date.UTC(start.getUTCFullYear(),start.getUTCMonth()+1,0)).getUTCDate();
+  start.setUTCDate(Math.min(end.getUTCDate(),days)+1);
+  return {since:start.toISOString().slice(0,10),until:today};
+}
 export function reportingQuery(preset, range) {
   if(preset === 'Custom time') {
     if(!validRange(range)) throw new Error('Choose a valid start and end date.');
